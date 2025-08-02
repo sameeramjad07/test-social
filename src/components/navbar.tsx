@@ -62,8 +62,8 @@ export function Navbar() {
 
   const userNavItems = [
     { name: "Dashboard", href: "/dashboard", icon: BarChart3 },
-    { name: "Calendar", href: "/calendar", icon: Calendar },
-    { name: "Analytics", href: "/analytics", icon: BarChart3 },
+    { name: "Calendar", href: "/dashboard/calendar", icon: Calendar },
+    { name: "Analytics", href: "/dashboard/analytics", icon: BarChart3 },
   ];
 
   return (
@@ -195,11 +195,13 @@ export function Navbar() {
                 <DropdownMenuContent align="end" className="w-56">
                   <DropdownMenuLabel>My Account</DropdownMenuLabel>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => router.push("/profile")}>
+                  {/* <DropdownMenuItem onClick={() => router.push("/profile")}>
                     <User className="mr-2 h-4 w-4" />
                     Profile
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => router.push("/settings")}>
+                  </DropdownMenuItem> */}
+                  <DropdownMenuItem
+                    onClick={() => router.push("/dashboard/settings")}
+                  >
                     <Settings className="mr-2 h-4 w-4" />
                     Settings
                   </DropdownMenuItem>
