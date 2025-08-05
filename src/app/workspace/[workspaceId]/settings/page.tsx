@@ -9,9 +9,11 @@ import {
   CardTitle 
 } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useSearchParams } from "next/navigation";
 
 export default function SocialAccountsPage() {
-  const  workspaceId  = "cmdyj0qaz003f5d723h6lgisl"
+    const searchParams = useSearchParams();
+    const workspaceId = searchParams.get("workspaceId");
 
   if (!workspaceId) {
     return <div>Loading...</div>;
