@@ -1,6 +1,7 @@
 // src/server/auth/helpers.ts
 import { auth } from "@/server/auth";
 import { db } from "@/server/db";
+import type { Workspace } from "@prisma/client";
 
 /**
  * Get the server session
@@ -23,6 +24,7 @@ export const getUserProfile = async (userId: string) => {
       createdAt: true,
       updatedAt: true,
       emailVerified: true,
+      workspaces: true,
     },
   });
 };
@@ -39,6 +41,7 @@ export const getUserByEmail = async (email: string) => {
       email: true,
       image: true,
       hashedPassword: true,
+      workspaces: true,
     },
   });
 };
@@ -64,4 +67,5 @@ export type AuthenticatedUser = {
   name?: string | null;
   email?: string | null;
   image?: string | null;
+  workspaces: Workspace[];
 };
