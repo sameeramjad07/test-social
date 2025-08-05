@@ -9,11 +9,15 @@ import {
   CardTitle 
 } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useSearchParams } from "next/navigation";
 
-export default function SocialAccountsPage() {
-    const searchParams = useSearchParams();
-    const workspaceId = searchParams.get("workspaceId");
+interface PageProps {
+  params: Promise<{
+    workspaceId: string;
+  }>;
+}
+
+export default async function SocialAccountsPage({ params }: PageProps) {
+  const { workspaceId } = await params;
 
   if (!workspaceId) {
     return <div>Loading...</div>;
