@@ -15,7 +15,7 @@ export default function SocialAccountCallbackPage() {
   const { mutate: handleCallback } = api.socialAccounts.handleCallback.useMutation({
     onSuccess: (data) => {
       toast.success("Account connected");
-      router.push(`/workspace/${data.stateData.workspaceId}/settings/social-accounts`);
+      router.push(`/workspace/${data.stateData.workspaceId}/settings`);
     },
     onError: (error) => {
       setError(error.message);
