@@ -20,20 +20,9 @@ export const getUserProfile = async (userId: string) => {
       name: true,
       email: true,
       image: true,
-      bio: true,
-      company: true,
-      website: true,
       createdAt: true,
       updatedAt: true,
       emailVerified: true,
-      _count: {
-        select: {
-          posts: true,
-          socialAccounts: true,
-          contentPosts: true,
-          schedules: true,
-        },
-      },
     },
   });
 };
