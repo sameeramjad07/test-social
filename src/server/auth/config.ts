@@ -140,11 +140,44 @@ export const authConfig: NextAuthConfig = {
       }
       return token;
     },
-    session({ session, token }) {
+    async session({ session, token }) {
       if (session.user) {
         session.user.id = token.id as string;
+
       }
-      return session;
+      const user = await db.user.findUnique({
+        where: {
+          id: token.id as string,
+        },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          image: true,
+          hashedPassword: true,
+          workspaces: {
+            select: {
+              workspace: true
+            }
+          }
+        },
+      });
+
+      if (!user || !user.hashedPassword) {
+        return session;
+      }
+
+      // Extract the actual workspace objects from the WorkspaceMember relation
+      const workspaces = user.workspaces.map(wm => wm.workspace);
+
+      return {
+        ...session,
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        image: user.image,
+        workspaces: workspaces
+      };
     },
   },
   events: {

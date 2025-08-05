@@ -17,6 +17,7 @@ export abstract class SocialMediaWrapper {
   abstract getAccountInfo(accessToken: string): Promise<SocialMediaAccount>;
   
   protected handleApiError(error: any, platform: string): never {
+    console.error(error?.response?.data)
     console.error(`${platform} API Error:`, error);
     throw new TRPCError({
       code: 'INTERNAL_SERVER_ERROR',
