@@ -7,142 +7,386 @@ generator client {
 
 datasource db {
     provider = "postgresql"
-    // NOTE: When using mysql or sqlserver, uncomment the @db.Text annotations in model Account below
-    // Further reading:
-    // https://next-auth.js.org/adapters/prisma#create-the-prisma-schema
-    // https://www.prisma.io/docs/reference/api-reference/prisma-schema-reference#string
     url      = env("DATABASE_URL")
 }
 
-model Post {
-    id        Int      @id @default(autoincrement())
-    name      String
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+// ========== WORKSPACE & PERMISSIONS ==========
 
-    createdBy   User   @relation(fields: [createdById], references: [id])
-    createdById String
-
-    @@index([name])
+model Workspace {
+    id          String   @id @default(cuid())
+    name        String
+    slug        String   @unique
+    description String?
+    logoUrl     String?  @map("logo_url")
+    createdAt   DateTime @default(now()) @map("created_at")
+    updatedAt   DateTime @updatedAt @map("updated_at")
+    
+    // Relations
+    members         WorkspaceMember[]
+    socialAccounts  SocialAccount[]
+    posts           Post[]
+    schedules       PostSchedule[]
+    templates       PostTemplate[]
+    roles           Role[]
+    
+    @@index([slug])
+    @@map("workspaces")
 }
 
-// Necessary for Next auth
-model Account {
-    id                       String  @id @default(cuid())
-    userId                   String
-    type                     String
-    provider                 String
-    providerAccountId        String
-    refresh_token            String? // @db.Text
-    access_token             String? // @db.Text
-    expires_at               Int?
-    token_type               String?
-    scope                    String?
-    id_token                 String? // @db.Text
-    session_state            String?
-    user                     User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-    refresh_token_expires_in Int?
-
-    @@unique([provider, providerAccountId])
+model Role {
+    id          String   @id @default(cuid())
+    workspaceId String?  @map("workspace_id") // Null for system roles
+    name        String
+    description String?
+    isSystem    Boolean  @default(false) @map("is_system") // System roles can't be edited/deleted
+    createdAt   DateTime @default(now()) @map("created_at")
+    updatedAt   DateTime @updatedAt @map("updated_at")
+    
+    // Relations
+    workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+    permissions RolePermission[]
+    members     WorkspaceMember[]
+    
+    @@unique([workspaceId, name])
+    @@unique([name, isSystem]) 
+    @@index([workspaceId])
+    @@map("roles")
 }
 
-model Session {
+model Permission {
+    id          String   @id @default(cuid())
+    resource    String   // e.g., "posts", "social_accounts", "workspace_settings"
+    action      String   // e.g., "create", "read", "update", "delete", "publish", "approve"
+    description String?
+    
+    // Relations
+    roles RolePermission[]
+    
+    @@unique([resource, action])
+    @@index([resource])
+    @@map("permissions")
+}
+
+model RolePermission {
     id           String   @id @default(cuid())
-    sessionToken String   @unique
-    userId       String
-    expires      DateTime
-    user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+    roleId       String   @map("role_id")
+    permissionId String   @map("permission_id")
+    createdAt    DateTime @default(now()) @map("created_at")
+    
+    role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+    permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+    
+    @@unique([roleId, permissionId])
+    @@index([permissionId])
+    @@map("role_permissions")
 }
 
-
-model VerificationToken {
-    identifier String
-    token      String   @unique
-    expires    DateTime
-
-    @@unique([identifier, token])
+model WorkspaceMember {
+    id          String   @id @default(cuid())
+    workspaceId String   @map("workspace_id")
+    userId      String   @map("user_id")
+    roleId      String   @map("role_id")
+    joinedAt    DateTime @default(now()) @map("joined_at")
+    
+    workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+    user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+    role      Role      @relation(fields: [roleId], references: [id])
+    
+    @@unique([workspaceId, userId])
+    @@index([userId])
+    @@index([roleId])
+    @@map("workspace_members")
 }
+
+// ========== USER MANAGEMENT ==========
 
 model User {
     id             String    @id @default(cuid())
     name           String?
     email          String?   @unique
-    emailVerified  DateTime?
+    emailVerified  DateTime? @map("email_verified")
     image          String?
-    hashedPassword String?   // Added for credentials authentication
-    bio            String?   // Added for user profile
-    company        String?   // Added for user profile
-    website        String?   // Added for user profile
-    createdAt      DateTime  @default(now())
-    updatedAt      DateTime  @updatedAt
+    hashedPassword String?   @map("hashed_password")
+    createdAt      DateTime  @default(now()) @map("created_at")
+    updatedAt      DateTime  @updatedAt @map("updated_at")
     
-    accounts       Account[]
-    sessions       Session[]
-    posts          Post[]
+    // Relations
+    accounts        Account[]
+    sessions        Session[]
+    workspaces      WorkspaceMember[]
+    createdPosts    Post[]
+    approvals       PostApproval[]
     
-    // Future: Social media integrations
-    socialAccounts SocialAccount[]
-    contentPosts   ContentPost[]
-    schedules      Schedule[]
+    @@map("users")
 }
 
-// Social Media Management Models
+// ========== SOCIAL MEDIA ACCOUNTS ==========
+
 model SocialAccount {
     id           String    @id @default(cuid())
-    userId       String
-    platform     String    // "instagram", "twitter", "facebook", "linkedin", "tiktok"
-    accountId    String    // Platform-specific account ID
-    accountName  String    // Display name/username on platform
-    accessToken  String?   @db.Text
-    refreshToken String?   @db.Text
-    expiresAt    DateTime?
-    isActive     Boolean   @default(true)
-    createdAt    DateTime  @default(now())
-    updatedAt    DateTime  @updatedAt
-
-    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-    @@unique([userId, platform, accountId])
+    workspaceId  String    @map("workspace_id")
+    platform     Platform
+    accountId    String    @map("account_id") // Platform-specific account ID
+    accountName  String    @map("account_name") // Display name/username
+    accountImage String?   @map("account_image") // Profile picture
+    accessToken  String?   @db.Text @map("access_token")
+    refreshToken String?   @db.Text @map("refresh_token")
+    expiresAt    DateTime? @map("expires_at")
+    isActive     Boolean   @default(true) @map("is_active")
+    metadata     Json?     // Platform-specific data
+    createdAt    DateTime  @default(now()) @map("created_at")
+    updatedAt    DateTime  @updatedAt @map("updated_at")
+    
+    workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+    posts        Post[]
+    
+    @@unique([workspaceId, platform, accountId])
+    @@index([workspaceId, isActive])
+    @@map("social_accounts")
 }
 
-model ContentPost {
-    id          String    @id @default(cuid())
-    userId      String
-    title       String?
-    content     String    @db.Text
-    imageUrl    String?
-    imageUrls   String[]  // Multiple images support
-    platforms   String[]  // Array of platforms to post to
-    hashtags    String[]  // Array of hashtags
-    status      String    @default("draft") // "draft", "scheduled", "published", "failed"
-    scheduledAt DateTime?
-    publishedAt DateTime?
-    prompt      String?   @db.Text // Store the AI prompt used
-    createdAt   DateTime  @default(now())
-    updatedAt   DateTime  @updatedAt
+enum Platform {
+    INSTAGRAM
+    FACEBOOK
+    LINKEDIN
+    TWITTER
+    TIKTOK
+}
 
-    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+// ========== POST MANAGEMENT ==========
 
-    @@index([userId, status])
+model Post {
+    id              String      @id @default(cuid())
+    workspaceId     String      @map("workspace_id")
+    createdById     String      @map("created_by_id")
+    
+    // Content
+    content         String      @db.Text
+    caption         String?     @db.Text // For image posts
+    hashtags        String[]
+    mentions        String[]
+    
+    // Status tracking
+    status          PostStatus  @default(DRAFT)
+    contentApproved Boolean     @default(false) @map("content_approved")
+    imagesApproved  Boolean     @default(false) @map("images_approved")
+    
+    // Scheduling
+    scheduledAt     DateTime?   @map("scheduled_at")
+    publishedAt     DateTime?   @map("published_at")
+    
+    // AI Generation
+    aiPrompt        String?     @db.Text @map("ai_prompt")
+    aiModel         String?     @map("ai_model")
+    
+    // Metadata
+    createdAt       DateTime    @default(now()) @map("created_at")
+    updatedAt       DateTime    @updatedAt @map("updated_at")
+    
+    // Relations
+    workspace       Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+    createdBy       User              @relation(fields: [createdById], references: [id])
+    images          PostImage[]
+    socialAccounts  SocialAccount[]
+    approvals       PostApproval[]
+    publications    PostPublication[]
+    schedule        PostSchedule?     @relation(fields: [scheduleId], references: [id])
+    scheduleId      String?           @map("schedule_id")
+    
+    @@index([workspaceId, status])
     @@index([scheduledAt])
+    @@index([scheduleId])
+    @@map("posts")
 }
 
-model Schedule {
+enum PostStatus {
+    DRAFT
+    CONTENT_PENDING_APPROVAL
+    CONTENT_APPROVED
+    IMAGE_GENERATION_PENDING
+    IMAGE_PENDING_APPROVAL
+    APPROVED
+    SCHEDULED
+    PUBLISHING
+    PUBLISHED
+    FAILED
+}
+
+model PostImage {
     id          String   @id @default(cuid())
-    userId      String
-    title       String
-    description String?  @db.Text
-    platform    String
-    scheduledAt DateTime
-    isRecurring Boolean  @default(false)
-    recurrence  String?  // "daily", "weekly", "monthly", "custom"
-    recurrenceData Json? // Store complex recurrence patterns
-    isActive    Boolean  @default(true)
-    createdAt   DateTime @default(now())
-    updatedAt   DateTime @updatedAt
-
-    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-    @@index([userId, scheduledAt])
-    @@index([isActive, scheduledAt])
+    postId      String   @map("post_id")
+    url         String
+    alt         String?
+    width       Int?
+    height      Int?
+    size        Int?     // File size in bytes
+    mimeType    String?  @map("mime_type")
+    aiPrompt    String?  @db.Text @map("ai_prompt") // If AI generated
+    isApproved  Boolean  @default(false) @map("is_approved")
+    order       Int      @default(0)
+    createdAt   DateTime @default(now()) @map("created_at")
+    
+    post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+    
+    @@index([postId])
+    @@map("post_images")
 }
+
+model PostApproval {
+    id          String       @id @default(cuid())
+    postId      String       @map("post_id")
+    userId      String       @map("user_id")
+    type        ApprovalType
+    approved    Boolean
+    comments    String?      @db.Text
+    approvedAt  DateTime     @default(now()) @map("approved_at")
+    
+    post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+    user User @relation(fields: [userId], references: [id])
+    
+    @@unique([postId, userId, type])
+    @@index([postId, type])
+    @@map("post_approvals")
+}
+
+enum ApprovalType {
+    CONTENT
+    IMAGE
+}
+
+model PostPublication {
+    id              String    @id @default(cuid())
+    postId          String    @map("post_id")
+    platform        Platform
+    platformPostId  String?   @map("platform_post_id") // ID on the social platform
+    publishedAt     DateTime  @default(now()) @map("published_at")
+    success         Boolean
+    errorMessage    String?   @db.Text @map("error_message")
+    metrics         Json?     // Store platform-specific metrics
+    
+    post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+    
+    @@index([postId, platform])
+    @@map("post_publications")
+}
+
+// ========== SCHEDULING ==========
+
+model PostSchedule {
+    id                String          @id @default(cuid())
+    workspaceId       String          @map("workspace_id")
+    name              String
+    description       String?
+    
+    // Schedule configuration
+    startDate         DateTime        @map("start_date")
+    endDate           DateTime?       @map("end_date")
+    frequency         ScheduleFrequency
+    weekDays          Int[]           @map("week_days") // 0-6 for Sunday-Saturday
+    monthDays         Int[]           @map("month_days") // 1-31 for days of month
+    timeSlots         String[]        @map("time_slots") // HH:MM format times
+    
+    // Platform configuration
+    platforms         Platform[]
+    postsPerSlot      Int             @default(1) @map("posts_per_slot")
+    
+    // AI Generation settings
+    contentPrompt     String?         @db.Text @map("content_prompt")
+    imagePrompt       String?         @db.Text @map("image_prompt")
+    hashtags          String[]
+    
+    // Status
+    isActive          Boolean         @default(true) @map("is_active")
+    lastGeneratedAt   DateTime?       @map("last_generated_at")
+    
+    createdAt         DateTime        @default(now()) @map("created_at")
+    updatedAt         DateTime        @updatedAt @map("updated_at")
+    
+    // Relations
+    workspace         Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+    posts             Post[]
+    
+    @@index([workspaceId, isActive])
+    @@map("post_schedules")
+}
+
+enum ScheduleFrequency {
+    DAILY
+    WEEKLY
+    MONTHLY
+    CUSTOM
+}
+
+// ========== POST TEMPLATES ==========
+
+model PostTemplate {
+    id           String   @id @default(cuid())
+    workspaceId  String   @map("workspace_id")
+    name         String
+    description  String?
+    content      String   @db.Text
+    hashtags     String[]
+    platforms    Platform[]
+    isActive     Boolean  @default(true) @map("is_active")
+    createdAt    DateTime @default(now()) @map("created_at")
+    updatedAt    DateTime @updatedAt @map("updated_at")
+    
+    workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+    
+    @@index([workspaceId, isActive])
+    @@map("post_templates")
+}
+
+// ========== NEXT-AUTH MODELS ==========
+
+model Account {
+    id                       String  @id @default(cuid())
+    userId                   String  @map("user_id")
+    type                     String
+    provider                 String
+    providerAccountId        String  @map("provider_account_id")
+    refreshToken             String? @db.Text @map("refresh_token")
+    accessToken              String? @db.Text @map("access_token")
+    expiresAt                Int?    @map("expires_at")
+    tokenType                String? @map("token_type")
+    scope                    String?
+    idToken                  String? @db.Text @map("id_token")
+    sessionState             String? @map("session_state")
+    refreshTokenExpiresIn    Int?    @map("refresh_token_expires_in")
+    
+    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+    
+    @@unique([provider, providerAccountId])
+    @@map("accounts")
+}
+
+model OAuthState {
+    id        String   @id @default(cuid())
+    state     String   @unique
+    data      Json     // Contains workspaceId, userId, platform, timestamp
+    expiresAt DateTime
+    createdAt DateTime @default(now()) @map("created_at")
+    
+    @@index([expiresAt])
+    @@map("oauth_states")
+}
+
+model Session {
+    id           String   @id @default(cuid())
+    sessionToken String   @unique @map("session_token")
+    userId       String   @map("user_id")
+    expires      DateTime
+    user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+    
+    @@map("sessions")
+}
+
+model VerificationToken {
+    identifier String
+    token      String   @unique
+    expires    DateTime
+    
+    @@unique([identifier, token])
+    @@map("verification_tokens")
+}
+

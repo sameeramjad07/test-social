@@ -1,15 +1,13 @@
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import type { DefaultSession, NextAuthConfig } from "next-auth";
-// import DiscordProvider from "next-auth/providers/discord";
-import type { JWT } from "next-auth/jwt";
-
 import { db } from "@/server/db";
-
 import GoogleProvider from "next-auth/providers/google";
 import GitHubProvider from "next-auth/providers/github";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { compare } from "bcryptjs";
 import { env } from "@/env";
+import type { Workspace } from "@prisma/client";
+
 /**
  * Module augmentation for `next-auth` types. Allows us to add custom properties to the `session`
  * object and keep type safety.
@@ -23,6 +21,7 @@ declare module "next-auth" {
       name?: string | null;
       email?: string | null;
       image?: string | null;
+      workspaces?: Workspace[];
       // ...other properties
       // role: UserRole;
     } & DefaultSession["user"];
@@ -33,6 +32,7 @@ declare module "next-auth" {
     name?: string | null;
     email?: string | null;
     image?: string | null;
+    workspaces?: Workspace[];
   }
   interface JWT {
     id?: string;
@@ -86,6 +86,11 @@ export const authConfig: NextAuthConfig = {
               email: true,
               image: true,
               hashedPassword: true,
+              workspaces: {
+                select: {
+                  workspace: true
+                }
+              }
             },
           });
 
@@ -102,11 +107,15 @@ export const authConfig: NextAuthConfig = {
             return null;
           }
 
+          // Extract the actual workspace objects from the WorkspaceMember relation
+          const workspaces = user.workspaces.map(wm => wm.workspace);
+
           return {
             id: user.id,
             name: user.name,
             email: user.email,
             image: user.image,
+            workspaces: workspaces
           };
         } catch (error) {
           console.error("Authentication error:", error);
@@ -131,11 +140,44 @@ export const authConfig: NextAuthConfig = {
       }
       return token;
     },
-    session({ session, token }) {
+    async session({ session, token }) {
       if (session.user) {
         session.user.id = token.id as string;
+
       }
-      return session;
+      const user = await db.user.findUnique({
+        where: {
+          id: token.id as string,
+        },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          image: true,
+          hashedPassword: true,
+          workspaces: {
+            select: {
+              workspace: true
+            }
+          }
+        },
+      });
+
+      if (!user || !user.hashedPassword) {
+        return session;
+      }
+
+      // Extract the actual workspace objects from the WorkspaceMember relation
+      const workspaces = user.workspaces.map(wm => wm.workspace);
+
+      return {
+        ...session,
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        image: user.image,
+        workspaces: workspaces
+      };
     },
   },
   events: {
