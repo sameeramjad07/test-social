@@ -26,9 +26,11 @@ import {
   Calendar,
   Sparkles,
   ChevronDown,
+  SwitchCamera,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
+import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 
 export function Navbar() {
   const { data: session, status } = useSession();
@@ -116,6 +118,12 @@ export function Navbar() {
             </Badge>
           </motion.div>
 
+          {session && (
+            <div className="ml-4">
+              <WorkspaceSwitcher />
+            </div>
+          )}
+
           {/* Desktop Navigation */}
           <div className="hidden md:flex items-center space-x-8">
             {session ? (
@@ -199,6 +207,10 @@ export function Navbar() {
                     <User className="mr-2 h-4 w-4" />
                     Profile
                   </DropdownMenuItem> */}
+                  <DropdownMenuItem onClick={() => router.push("/workspace")}>
+                    <SwitchCamera className="mr-2 h-4 w-4" />
+                    Manage Workspaces
+                  </DropdownMenuItem>
                   <DropdownMenuItem
                     onClick={() => router.push("/dashboard/settings")}
                   >

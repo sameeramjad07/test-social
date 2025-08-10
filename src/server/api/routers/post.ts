@@ -2,7 +2,19 @@ import { z } from "zod";
 import { Platform, PostStatus } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
-import { FacebookWrapper, InstagramWrapper, LinkedInWrapper } from "@/lib/social-media";
+import {
+  FacebookWrapper,
+  InstagramWrapper,
+  LinkedInWrapper,
+} from "@/lib/social-media";
+
+const listPostsSchema = z.object({
+  workspaceId: z.string(),
+  status: z.nativeEnum(PostStatus).optional(),
+  scheduled: z.boolean().optional(), // Filter for scheduled posts
+  platform: z.nativeEnum(Platform).optional(),
+  limit: z.number().min(1).max(100).optional().default(20),
+});
 
 export const postsRouter = createTRPCRouter({
   // Publish a post
@@ -126,13 +138,14 @@ export const postsRouter = createTRPCRouter({
           results.push(result);
         } catch (error) {
           console.error(`Failed to publish to ${account.platform}:`, error);
-          
+
           await ctx.db.postPublication.create({
             data: {
               postId: post.id,
               platform: account.platform,
               success: false,
-              errorMessage: error instanceof Error ? error.message : "Unknown error",
+              errorMessage:
+                error instanceof Error ? error.message : "Unknown error",
             },
           });
         }
@@ -149,5 +162,62 @@ export const postsRouter = createTRPCRouter({
       });
 
       return { results };
+    }),
+
+  list: protectedProcedure
+    .input(listPostsSchema)
+    .query(async ({ ctx, input }) => {
+      // Verify membership
+      const member = await ctx.db.workspaceMember.findFirst({
+        where: {
+          workspaceId: input.workspaceId,
+          userId: ctx.session.user.id,
+        },
+      });
+
+      if (!member) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You are not a member of this workspace",
+        });
+      }
+
+      const posts = await ctx.db.post.findMany({
+        where: {
+          workspaceId: input.workspaceId,
+          status: input.status,
+          scheduledAt: input.scheduled ? { not: null } : undefined,
+          socialAccounts: input.platform
+            ? { some: { platform: input.platform } }
+            : undefined,
+        },
+        select: {
+          id: true,
+          content: true,
+          caption: true,
+          hashtags: true,
+          status: true,
+          scheduledAt: true,
+          publishedAt: true,
+          createdAt: true,
+          socialAccounts: {
+            select: {
+              platform: true,
+              accountName: true,
+            },
+          },
+          publications: {
+            select: {
+              platform: true,
+              success: true,
+              metrics: true,
+            },
+          },
+        },
+        orderBy: { scheduledAt: "asc" },
+        take: input.limit,
+      });
+
+      return posts;
     }),
 });

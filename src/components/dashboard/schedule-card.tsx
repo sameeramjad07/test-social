@@ -1,3 +1,4 @@
+// src/components/dashboard/schedule-card.tsx
 "use client";
 
 import { useState } from "react";
@@ -30,7 +31,6 @@ import {
   Trash2,
   MoreHorizontal,
   Instagram,
-  Twitter,
   Facebook,
   Linkedin,
 } from "lucide-react";
@@ -41,14 +41,14 @@ interface Schedule {
   id: string;
   name: string;
   platforms: string[];
-  duration: number;
-  durationType: "days" | "weeks" | "months";
+  duration: number | null;
+  durationType: string;
   frequency: string;
   status: "draft" | "active" | "paused" | "completed";
   createdAt: Date;
   postsGenerated: number;
   totalPosts: number;
-  description?: string;
+  description?: string | null;
 }
 
 interface ScheduleCardProps {
@@ -62,7 +62,6 @@ interface ScheduleCardProps {
 
 const platformIcons = {
   Instagram: { icon: Instagram, color: "bg-pink-500" },
-  Twitter: { icon: Twitter, color: "bg-blue-500" },
   Facebook: { icon: Facebook, color: "bg-blue-600" },
   LinkedIn: { icon: Linkedin, color: "bg-blue-700" },
 };
@@ -178,7 +177,7 @@ export function ScheduleCard({
                 <div className="flex items-center gap-1">
                   <Clock className="w-4 h-4" />
                   <span>
-                    {schedule.duration} {schedule.durationType}
+                    {schedule.duration ?? "N/A"} {schedule.durationType}
                   </span>
                 </div>
                 <div className="flex items-center gap-1">

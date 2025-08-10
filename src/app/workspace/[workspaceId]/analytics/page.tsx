@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { useParams } from "next/navigation";
+import { api } from "@/trpc/react";
 import {
   Card,
   CardContent,
@@ -28,139 +30,35 @@ import {
   Eye,
   Download,
   Instagram,
-  Twitter,
   Facebook,
   Linkedin,
 } from "lucide-react";
 import { motion } from "framer-motion";
 
+type TimeRange = "7d" | "30d" | "90d" | "1y";
+type Platform = "INSTAGRAM" | "FACEBOOK" | "LINKEDIN" | "all";
+
 export default function AnalyticsPage() {
-  const [timeRange, setTimeRange] = useState("7d");
-  const [selectedPlatform, setSelectedPlatform] = useState("all");
+  const params = useParams<{ workspaceId: string }>();
+  const workspaceId = params.workspaceId;
+  const [timeRange, setTimeRange] = useState<TimeRange>("7d");
+  const [selectedPlatform, setSelectedPlatform] = useState<Platform>("all");
 
-  const overviewStats = [
-    {
-      title: "Total Reach",
-      value: "124.5K",
-      change: "+12.5%",
-      trend: "up",
-      icon: Eye,
-      color: "text-blue-600",
-    },
-    {
-      title: "Engagement Rate",
-      value: "4.2%",
-      change: "+0.8%",
-      trend: "up",
-      icon: Heart,
-      color: "text-pink-600",
-    },
-    {
-      title: "New Followers",
-      value: "2,847",
-      change: "+18.2%",
-      trend: "up",
-      icon: Users,
-      color: "text-green-600",
-    },
-    {
-      title: "Posts Published",
-      value: "24",
-      change: "-4.2%",
-      trend: "down",
-      icon: BarChart3,
-      color: "text-purple-600",
-    },
-  ];
+  const { data: analytics } = api.analytics.getAnalytics.useQuery({
+    workspaceId,
+    timeRange,
+    platform: selectedPlatform,
+  });
 
-  const platformStats = [
-    {
-      platform: "Instagram",
-      icon: Instagram,
-      followers: "12.5K",
-      engagement: "5.2%",
-      reach: "45.2K",
-      posts: 8,
-      color: "bg-pink-500",
-      change: "+15%",
-    },
-    {
-      platform: "Twitter",
-      icon: Twitter,
-      followers: "8.2K",
-      engagement: "3.8%",
-      reach: "32.1K",
-      posts: 12,
-      color: "bg-blue-500",
-      change: "+8%",
-    },
-    {
-      platform: "Facebook",
-      icon: Facebook,
-      followers: "15.8K",
-      engagement: "2.9%",
-      reach: "28.7K",
-      posts: 4,
-      color: "bg-blue-600",
-      change: "+5%",
-    },
-    {
-      platform: "LinkedIn",
-      icon: Linkedin,
-      followers: "5.3K",
-      engagement: "6.1%",
-      reach: "18.5K",
-      posts: 3,
-      color: "bg-blue-700",
-      change: "+22%",
-    },
-  ];
+  if (!analytics) {
+    return <div>Loading...</div>; // Add loading state
+  }
 
-  const topPosts = [
-    {
-      id: 1,
-      platform: "Instagram",
-      content: "Behind the scenes of our latest product photoshoot ✨",
-      engagement: 1247,
-      reach: 8934,
-      likes: 892,
-      comments: 45,
-      shares: 23,
-      date: "2 days ago",
-    },
-    {
-      id: 2,
-      platform: "Twitter",
-      content: "Just launched our new AI-powered content generator! 🚀",
-      engagement: 856,
-      reach: 5621,
-      likes: 234,
-      comments: 67,
-      shares: 89,
-      date: "3 days ago",
-    },
-    {
-      id: 3,
-      platform: "LinkedIn",
-      content: "5 tips for better social media engagement in 2025",
-      engagement: 634,
-      reach: 3421,
-      likes: 156,
-      comments: 23,
-      shares: 45,
-      date: "5 days ago",
-    },
-  ];
-
-  const engagementData = [
-    { day: "Mon", likes: 120, comments: 45, shares: 23 },
-    { day: "Tue", likes: 150, comments: 52, shares: 31 },
-    { day: "Wed", likes: 180, comments: 38, shares: 28 },
-    { day: "Thu", likes: 220, comments: 65, shares: 42 },
-    { day: "Fri", likes: 190, comments: 48, shares: 35 },
-    { day: "Sat", likes: 160, comments: 41, shares: 29 },
-    { day: "Sun", likes: 140, comments: 36, shares: 25 },
-  ];
+  const platformIcons = {
+    INSTAGRAM: Instagram,
+    FACEBOOK: Facebook,
+    LINKEDIN: Linkedin,
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
@@ -213,7 +111,7 @@ export default function AnalyticsPage() {
           transition={{ duration: 0.5, delay: 0.1 }}
           className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8"
         >
-          {overviewStats.map((stat, index) => (
+          {analytics.overviewStats.map((stat, index) => (
             <Card
               key={index}
               className="border-0 shadow-lg bg-white/80 backdrop-blur-sm dark:bg-slate-900/80"
@@ -271,7 +169,7 @@ export default function AnalyticsPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                {platformStats.map((platform, index) => (
+                {analytics.platformStats.map((platform, index) => (
                   <motion.div
                     key={platform.platform}
                     initial={{ opacity: 0, y: 20 }}
@@ -281,15 +179,15 @@ export default function AnalyticsPage() {
                   >
                     <div className="flex items-center gap-4">
                       <div
-                        className={`w-12 h-12 ${platform.color} rounded-lg flex items-center justify-center`}
+                        className={`w-12 h-12 bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg flex items-center justify-center`}
                       >
-                        <platform.icon className="w-6 h-6 text-white" />
+                        <platformIcons[platform.platform] className="w-6 h-6 text-white" />
                       </div>
                       <div>
                         <p className="font-medium">{platform.platform}</p>
-                        <p className="text-sm text-slate-500">
+                        <span className="text-sm text-slate-500">
                           {platform.followers} followers
-                        </p>
+                        </span>
                       </div>
                     </div>
                     <div className="grid grid-cols-3 gap-4 text-center">
@@ -333,7 +231,7 @@ export default function AnalyticsPage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  {engagementData.map((day, index) => (
+                  {analytics.weeklyEngagement.map((day, index) => (
                     <div key={day.day} className="space-y-2">
                       <div className="flex justify-between text-sm">
                         <span className="font-medium">{day.day}</span>
@@ -393,7 +291,7 @@ export default function AnalyticsPage() {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {topPosts.map((post, index) => (
+                {analytics.topPosts.map((post, index) => (
                   <motion.div
                     key={post.id}
                     initial={{ opacity: 0, y: 20 }}

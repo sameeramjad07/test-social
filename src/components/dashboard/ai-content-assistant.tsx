@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect } from "react";
+import { api } from "@/trpc/react";
 import {
   Card,
   CardContent,
@@ -12,42 +14,95 @@ import { Badge } from "@/components/ui/badge";
 import { Sparkles, Plus, Zap, FileText, Play, Pause } from "lucide-react";
 import { ScheduleCard } from "./schedule-card";
 import { motion } from "framer-motion";
+import { toast } from "sonner";
 
 interface Schedule {
   id: string;
   name: string;
   platforms: string[];
-  duration: number;
+  duration: number | null;
   durationType: "days" | "weeks" | "months";
   frequency: string;
   status: "draft" | "active" | "paused" | "completed";
   createdAt: Date;
   postsGenerated: number;
   totalPosts: number;
-  description?: string;
+  description?: string | null;
 }
 
 interface AIContentAssistantProps {
-  schedules: Schedule[];
+  workspaceId: string;
   onCreateSchedule: () => void;
   onEditSchedule: (scheduleId: string) => void;
-  onDeleteSchedule: (scheduleId: string) => void;
-  onPauseSchedule: (scheduleId: string) => void;
-  onResumeSchedule: (scheduleId: string) => void;
 }
 
 export function AIContentAssistant({
-  schedules,
+  workspaceId,
   onCreateSchedule,
   onEditSchedule,
-  onDeleteSchedule,
-  onPauseSchedule,
-  onResumeSchedule,
 }: AIContentAssistantProps) {
-  const draftSchedules = schedules.filter((s) => s.status === "draft");
-  const activeSchedules = schedules.filter((s) => s.status === "active");
-  const pausedSchedules = schedules.filter((s) => s.status === "paused");
-  const completedSchedules = schedules.filter((s) => s.status === "completed");
+  const { data: schedules, refetch } = api.schedules.list.useQuery(
+    { workspaceId },
+    { enabled: !!workspaceId }
+  );
+
+  const pauseMutation = api.schedules.update.useMutation({
+    onSuccess: () => {
+      toast.success("Schedule paused");
+      refetch();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const resumeMutation = api.schedules.update.useMutation({
+    onSuccess: () => {
+      toast.success("Schedule resumed");
+      refetch();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const deleteMutation = api.schedules.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Schedule deleted");
+      refetch();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  // const draftSchedules = schedules?.filter((s) => s.status === "draft") || [];
+  const draftSchedules: Schedule[] =
+    schedules
+      ?.filter((s) => s.status === "draft")
+      .map((s) => ({
+        ...s,
+        durationType: s.durationType as "days" | "weeks" | "months",
+        status: s.status as "draft" | "active" | "paused" | "completed",
+      })) || [];
+  const activeSchedules: Schedule[] =
+    schedules
+      ?.filter((s) => s.status === "active")
+      .map((s) => ({
+        ...s,
+        durationType: s.durationType as "days" | "weeks" | "months",
+        status: s.status as "draft" | "active" | "paused" | "completed",
+      })) || [];
+  const pausedSchedules: Schedule[] =
+    schedules
+      ?.filter((s) => s.status === "paused")
+      .map((s) => ({
+        ...s,
+        durationType: s.durationType as "days" | "weeks" | "months",
+        status: s.status as "draft" | "active" | "paused" | "completed",
+      })) || [];
+  const completedSchedules: Schedule[] =
+    schedules
+      ?.filter((s) => s.status === "completed")
+      .map((s) => ({
+        ...s,
+        durationType: s.durationType as "days" | "weeks" | "months",
+        status: s.status as "draft" | "active" | "paused" | "completed",
+      })) || [];
 
   const ScheduleSection = ({
     title,
@@ -92,9 +147,23 @@ export function AIContentAssistant({
               key={schedule.id}
               schedule={schedule}
               onEdit={onEditSchedule}
-              onDelete={onDeleteSchedule}
-              onPause={onPauseSchedule}
-              onResume={onResumeSchedule}
+              onDelete={(id) =>
+                deleteMutation.mutate({ scheduleId: id, workspaceId })
+              }
+              onPause={(id) =>
+                pauseMutation.mutate({
+                  scheduleId: id,
+                  workspaceId,
+                  isActive: false,
+                })
+              }
+              onResume={(id) =>
+                resumeMutation.mutate({
+                  scheduleId: id,
+                  workspaceId,
+                  isActive: true,
+                })
+              }
               index={index}
             />
           ))}

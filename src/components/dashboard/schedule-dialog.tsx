@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { Platform } from "@prisma/client";
+import { api } from "@/trpc/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,92 +23,86 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Sparkles, Instagram, Twitter, Facebook, Linkedin } from "lucide-react";
+import {
+  Instagram,
+  Twitter,
+  Facebook,
+  Linkedin,
+  Sparkles,
+  Plus,
+} from "lucide-react";
 import { toast } from "sonner";
-
-interface SocialAccount {
-  platform: string;
-  username: string;
-  followers: string;
-  connected: boolean;
-  color: string;
-  icon: any;
-}
-
-interface NewSchedule {
-  name: string;
-  platforms: string[];
-  duration: number;
-  durationType: "days" | "weeks" | "months";
-  frequency: string;
-  description: string;
-}
+import { format } from "date-fns";
 
 interface ScheduleCreationDialogProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreateSchedule: (schedule: any) => void;
+  workspaceId: string;
 }
 
 export function ScheduleCreationDialog({
   isOpen,
   onOpenChange,
-  onCreateSchedule,
+  workspaceId,
 }: ScheduleCreationDialogProps) {
-  const [newSchedule, setNewSchedule] = useState<NewSchedule>({
+  const [newSchedule, setNewSchedule] = useState({
     name: "",
-    platforms: [],
-    duration: 1,
-    durationType: "weeks",
-    frequency: "daily",
     description: "",
+    platforms: [] as Platform[],
+    startDate: format(new Date(), "yyyy-MM-dd"),
+    endDate: "",
+    frequency: "DAILY" as "DAILY" | "WEEKLY" | "MONTHLY" | "CUSTOM",
+    weekDays: [] as number[],
+    monthDays: [] as number[],
+    timeSlots: ["12:00"],
+    postsPerSlot: 1,
+    contentPrompt: "",
+    imagePrompt: "",
+    hashtags: [] as string[],
   });
 
-  const socialAccounts: SocialAccount[] = [
-    {
-      platform: "Instagram",
-      username: "@yourhandle",
-      followers: "12.5K",
-      connected: true,
-      color: "bg-pink-500",
-      icon: Instagram,
+  const { data: socialAccounts } = api.socialAccounts.list.useQuery(
+    { workspaceId },
+    { enabled: !!workspaceId }
+  );
+
+  const createMutation = api.schedules.create.useMutation({
+    onSuccess: () => {
+      toast.success("Schedule created successfully!");
+      onOpenChange(false);
+      setNewSchedule({
+        name: "",
+        description: "",
+        platforms: [],
+        startDate: format(new Date(), "yyyy-MM-dd"),
+        endDate: "",
+        frequency: "DAILY",
+        weekDays: [],
+        monthDays: [],
+        timeSlots: ["12:00"],
+        postsPerSlot: 1,
+        contentPrompt: "",
+        imagePrompt: "",
+        hashtags: [],
+      });
     },
-    {
-      platform: "Twitter",
-      username: "@yourhandle",
-      followers: "8.2K",
-      connected: true,
-      color: "bg-blue-500",
-      icon: Twitter,
-    },
-    {
-      platform: "Facebook",
-      username: "Your Page",
-      followers: "15.8K",
-      connected: true,
-      color: "bg-blue-600",
-      icon: Facebook,
-    },
-    {
-      platform: "LinkedIn",
-      username: "Your Profile",
-      followers: "5.3K",
-      connected: true,
-      color: "bg-blue-700",
-      icon: Linkedin,
-    },
-  ];
+    onError: (error) => toast.error(error.message),
+  });
+
+  const platformIcons = {
+    INSTAGRAM: { icon: Instagram, color: "bg-pink-500" },
+    FACEBOOK: { icon: Facebook, color: "bg-blue-600" },
+    LINKEDIN: { icon: Linkedin, color: "bg-blue-700" },
+  };
 
   const frequencyOptions = [
-    { value: "daily", label: "Daily" },
-    { value: "every-2-days", label: "Every 2 days" },
-    { value: "every-3-days", label: "Every 3 days" },
-    { value: "weekly", label: "Weekly" },
-    { value: "twice-weekly", label: "Twice a week" },
-    { value: "twice-daily", label: "Twice daily" },
+    { value: "DAILY", label: "Daily" },
+    { value: "WEEKLY", label: "Weekly" },
+    { value: "MONTHLY", label: "Monthly" },
+    { value: "CUSTOM", label: "Custom" },
   ];
 
-  const handlePlatformToggle = (platform: string) => {
+  const handlePlatformToggle = (platform: Platform) => {
     setNewSchedule((prev) => ({
       ...prev,
       platforms: prev.platforms.includes(platform)
@@ -115,21 +111,37 @@ export function ScheduleCreationDialog({
     }));
   };
 
-  const calculateTotalPosts = () => {
-    const { duration, durationType, frequency } = newSchedule;
-    let totalDays = duration;
+  const handleWeekDayToggle = (day: number) => {
+    setNewSchedule((prev) => ({
+      ...prev,
+      weekDays: prev.weekDays.includes(day)
+        ? prev.weekDays.filter((d) => d !== day)
+        : [...prev.weekDays, day],
+    }));
+  };
 
-    if (durationType === "weeks") totalDays = duration * 7;
-    if (durationType === "months") totalDays = duration * 30;
+  const handleMonthDayToggle = (day: number) => {
+    setNewSchedule((prev) => ({
+      ...prev,
+      monthDays: prev.monthDays.includes(day)
+        ? prev.monthDays.filter((d) => d !== day)
+        : [...prev.monthDays, day],
+    }));
+  };
 
-    let postsPerDay = 1;
-    if (frequency === "every-2-days") postsPerDay = 0.5;
-    if (frequency === "every-3-days") postsPerDay = 0.33;
-    if (frequency === "weekly") postsPerDay = 1 / 7;
-    if (frequency === "twice-weekly") postsPerDay = 2 / 7;
-    if (frequency === "twice-daily") postsPerDay = 2;
+  const handleAddTimeSlot = () => {
+    setNewSchedule((prev) => ({
+      ...prev,
+      timeSlots: [...prev.timeSlots, "12:00"],
+    }));
+  };
 
-    return Math.ceil(totalDays * postsPerDay);
+  const handleTimeSlotChange = (index: number, value: string) => {
+    setNewSchedule((prev) => {
+      const newTimeSlots = [...prev.timeSlots];
+      newTimeSlots[index] = value;
+      return { ...prev, timeSlots: newTimeSlots };
+    });
   };
 
   const handleCreateSchedule = () => {
@@ -138,27 +150,12 @@ export function ScheduleCreationDialog({
       return;
     }
 
-    const totalPosts = calculateTotalPosts();
-    const schedule = {
-      id: Date.now().toString(),
+    createMutation.mutate({
+      workspaceId,
       ...newSchedule,
-      status: "draft",
-      createdAt: new Date(),
-      postsGenerated: 0,
-      totalPosts,
-    };
-
-    onCreateSchedule(schedule);
-    onOpenChange(false);
-    setNewSchedule({
-      name: "",
-      platforms: [],
-      duration: 1,
-      durationType: "weeks",
-      frequency: "daily",
-      description: "",
+      startDate: newSchedule.startDate,
+      endDate: newSchedule.endDate || undefined,
     });
-    toast.success("Schedule created successfully!");
   };
 
   return (
@@ -192,9 +189,15 @@ export function ScheduleCreationDialog({
           <div className="space-y-3">
             <Label>Select Platforms *</Label>
             <div className="grid grid-cols-2 gap-3">
-              {socialAccounts
-                .filter((account) => account.connected)
-                .map((account) => (
+              {socialAccounts?.map((account) => {
+                const { icon: Icon, color } = platformIcons[
+                  account.platform as keyof typeof platformIcons
+                ] || {
+                  icon: Sparkles,
+                  color: "bg-gray-500",
+                };
+
+                return (
                   <div
                     key={account.platform}
                     className={`flex items-center space-x-3 p-3 border rounded-lg cursor-pointer transition-all ${
@@ -206,92 +209,184 @@ export function ScheduleCreationDialog({
                   >
                     <Checkbox
                       checked={newSchedule.platforms.includes(account.platform)}
-                      onChange={() => handlePlatformToggle(account.platform)}
+                      onCheckedChange={() =>
+                        handlePlatformToggle(account.platform)
+                      }
                     />
                     <div
-                      className={`w-8 h-8 ${account.color} rounded-lg flex items-center justify-center`}
+                      className={`w-8 h-8 ${color} rounded-lg flex items-center justify-center`}
                     >
-                      <account.icon className="w-4 h-4 text-white" />
+                      <Icon className="w-4 h-4 text-white" />
                     </div>
                     <div>
-                      <p className="font-medium text-sm">{account.platform}</p>
+                      <p className="font-medium text-sm">
+                        {account.accountName || account.platform}
+                      </p>
                       <p className="text-xs text-slate-500">
-                        {account.followers} followers
+                        Expires:{" "}
+                        {account.expiresAt
+                          ? new Date(account.expiresAt).toLocaleDateString()
+                          : "N/A"}
                       </p>
                     </div>
                   </div>
-                ))}
+                );
+              })}
             </div>
           </div>
 
-          {/* Duration and Frequency */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* Schedule Timing */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="duration">Duration *</Label>
+              <Label htmlFor="start-date">Start Date *</Label>
               <Input
-                id="duration"
-                type="number"
-                min="1"
-                value={newSchedule.duration}
+                id="start-date"
+                type="date"
+                value={newSchedule.startDate}
                 onChange={(e) =>
-                  setNewSchedule({
-                    ...newSchedule,
-                    duration: Number.parseInt(e.target.value) || 1,
-                  })
+                  setNewSchedule({ ...newSchedule, startDate: e.target.value })
                 }
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="duration-type">Duration Type *</Label>
-              <Select
-                value={newSchedule.durationType}
-                onValueChange={(value: "days" | "weeks" | "months") =>
-                  setNewSchedule({ ...newSchedule, durationType: value })
+              <Label htmlFor="end-date">End Date (Optional)</Label>
+              <Input
+                id="end-date"
+                type="date"
+                value={newSchedule.endDate}
+                onChange={(e) =>
+                  setNewSchedule({ ...newSchedule, endDate: e.target.value })
                 }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="days">Days</SelectItem>
-                  <SelectItem value="weeks">Weeks</SelectItem>
-                  <SelectItem value="months">Months</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="frequency">Posting Frequency *</Label>
-              <Select
-                value={newSchedule.frequency}
-                onValueChange={(value) =>
-                  setNewSchedule({ ...newSchedule, frequency: value })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {frequencyOptions.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              />
             </div>
           </div>
 
-          {/* Description */}
+          {/* Frequency and Time Slots */}
           <div className="space-y-2">
-            <Label htmlFor="description">Description (Optional)</Label>
+            <Label htmlFor="frequency">Posting Frequency *</Label>
+            <Select
+              value={newSchedule.frequency}
+              onValueChange={(
+                value: "DAILY" | "WEEKLY" | "MONTHLY" | "CUSTOM"
+              ) => setNewSchedule({ ...newSchedule, frequency: value })}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {frequencyOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {(newSchedule.frequency === "WEEKLY" ||
+            newSchedule.frequency === "CUSTOM") && (
+            <div className="space-y-2">
+              <Label>Week Days</Label>
+              <div className="flex gap-2 flex-wrap">
+                {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(
+                  (day, index) => (
+                    <div key={index} className="flex items-center space-x-2">
+                      <Checkbox
+                        checked={newSchedule.weekDays.includes(index)}
+                        onChange={() => handleWeekDayToggle(index)}
+                      />
+                      <span>{day}</span>
+                    </div>
+                  )
+                )}
+              </div>
+            </div>
+          )}
+
+          {(newSchedule.frequency === "MONTHLY" ||
+            newSchedule.frequency === "CUSTOM") && (
+            <div className="space-y-2">
+              <Label>Month Days</Label>
+              <div className="grid grid-cols-7 gap-2">
+                {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (
+                  <div key={day} className="flex items-center space-x-2">
+                    <Checkbox
+                      checked={newSchedule.monthDays.includes(day)}
+                      onChange={() => handleMonthDayToggle(day)}
+                    />
+                    <span>{day}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <Label>Time Slots *</Label>
+            {newSchedule.timeSlots.map((slot, index) => (
+              <Input
+                key={index}
+                type="time"
+                value={slot}
+                onChange={(e) => handleTimeSlotChange(index, e.target.value)}
+                className="mb-2"
+              />
+            ))}
+            <Button
+              variant="outline"
+              onClick={handleAddTimeSlot}
+              className="w-full"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Add Time Slot
+            </Button>
+          </div>
+
+          {/* AI Prompts */}
+          <div className="space-y-2">
+            <Label htmlFor="content-prompt">Content Prompt (Optional)</Label>
             <Textarea
-              id="description"
-              value={newSchedule.description}
+              id="content-prompt"
+              value={newSchedule.contentPrompt}
               onChange={(e) =>
-                setNewSchedule({ ...newSchedule, description: e.target.value })
+                setNewSchedule({
+                  ...newSchedule,
+                  contentPrompt: e.target.value,
+                })
               }
-              placeholder="Brief description of this schedule's purpose..."
+              placeholder="e.g., Write engaging posts about our new AI features..."
               rows={3}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="image-prompt">Image Prompt (Optional)</Label>
+            <Textarea
+              id="image-prompt"
+              value={newSchedule.imagePrompt}
+              onChange={(e) =>
+                setNewSchedule({ ...newSchedule, imagePrompt: e.target.value })
+              }
+              placeholder="e.g., Generate images of futuristic tech interfaces..."
+              rows={3}
+            />
+          </div>
+
+          {/* Hashtags */}
+          <div className="space-y-2">
+            <Label htmlFor="hashtags">Hashtags (Optional)</Label>
+            <Input
+              id="hashtags"
+              value={newSchedule.hashtags.join(", ")}
+              onChange={(e) =>
+                setNewSchedule({
+                  ...newSchedule,
+                  hashtags: e.target.value
+                    .split(",")
+                    .map((tag) => tag.trim())
+                    .filter(Boolean),
+                })
+              }
+              placeholder="e.g., #AI, #SocialMedia, #Marketing"
             />
           </div>
 
@@ -304,19 +399,19 @@ export function ScheduleCreationDialog({
                 {newSchedule.platforms.join(", ") || "None selected"}
               </p>
               <p>
-                <strong>Duration:</strong> {newSchedule.duration}{" "}
-                {newSchedule.durationType}
+                <strong>Start Date:</strong> {newSchedule.startDate}
+              </p>
+              <p>
+                <strong>End Date:</strong>{" "}
+                {newSchedule.endDate || "Not specified"}
               </p>
               <p>
                 <strong>Frequency:</strong>{" "}
-                {
-                  frequencyOptions.find(
-                    (f) => f.value === newSchedule.frequency
-                  )?.label
-                }
+                {frequencyOptions.find((f) => f.value === newSchedule.frequency)
+                  ?.label || newSchedule.frequency}
               </p>
               <p>
-                <strong>Estimated Posts:</strong> {calculateTotalPosts()} posts
+                <strong>Time Slots:</strong> {newSchedule.timeSlots.join(", ")}
               </p>
             </div>
           </div>
@@ -328,8 +423,9 @@ export function ScheduleCreationDialog({
           <Button
             onClick={handleCreateSchedule}
             className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
+            disabled={createMutation.isPending}
           >
-            Create Schedule
+            {createMutation.isPending ? "Creating..." : "Create Schedule"}
           </Button>
         </DialogFooter>
       </DialogContent>
