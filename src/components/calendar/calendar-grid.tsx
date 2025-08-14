@@ -1,3 +1,4 @@
+// src/components/calendar/calendar-grid.tsx
 "use client";
 
 import { useState } from "react";
@@ -5,39 +6,42 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { CalendarDay } from "./calendar-day";
-import { PostDetailsDialog } from "./post-details-dialog";
-import { ScheduleDetailsDialog } from "./schedule-details-dialog";
-import type { Post, Schedule } from "@/types/calendar";
+import { useParams } from "next/navigation";
+import { api } from "@/trpc/react";
+import type { Post, PostSchedule } from "@prisma/client";
 
 interface CalendarGridProps {
   currentDate: Date;
   selectedDate: Date | null;
   setSelectedDate: (date: Date | null) => void;
-  scheduledPosts: Post[];
-  schedules: Schedule[];
+  scheduledPosts: any[];
+  schedules: any[];
   navigateMonth: (direction: "prev" | "next") => void;
-  onUpdatePost: (post: Post) => void;
-  onDeletePost: (postId: number) => void;
-  onDeleteSchedule: (scheduleId: string) => void;
 }
 
 export function CalendarGrid({
   currentDate,
   selectedDate,
   setSelectedDate,
-  scheduledPosts,
-  schedules,
   navigateMonth,
-  onUpdatePost,
-  onDeletePost,
-  onDeleteSchedule,
 }: CalendarGridProps) {
+  const params = useParams<{ workspaceId: string }>();
+  const workspaceId = params.workspaceId;
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
-  const [selectedSchedule, setSelectedSchedule] = useState<Schedule | null>(
+  const [selectedSchedule, setSelectedSchedule] = useState<PostSchedule | null>(
     null
   );
   const [isPostDialogOpen, setIsPostDialogOpen] = useState(false);
   const [isScheduleDialogOpen, setIsScheduleDialogOpen] = useState(false);
+
+  const { data: scheduledPosts } = api.posts.list.useQuery({
+    workspaceId,
+    scheduled: true,
+  });
+
+  const { data: schedules } = api.schedules.list.useQuery({
+    workspaceId,
+  });
 
   const getDaysInMonth = (date: Date) => {
     const year = date.getFullYear();
@@ -63,8 +67,10 @@ export function CalendarGrid({
   };
 
   const getPostsForDate = (date: Date) => {
-    return scheduledPosts.filter(
-      (post) => post.date.toDateString() === date.toDateString()
+    return (
+      scheduledPosts?.filter(
+        (post) => post.scheduledAt!.toDateString() === date.toDateString()
+      ) || []
     );
   };
 
@@ -73,7 +79,7 @@ export function CalendarGrid({
     setIsPostDialogOpen(true);
   };
 
-  const handleScheduleClick = (schedule: Schedule) => {
+  const handleScheduleClick = (schedule: PostSchedule) => {
     setSelectedSchedule(schedule);
     setIsScheduleDialogOpen(true);
   };
@@ -155,7 +161,7 @@ export function CalendarGrid({
                   key={date.toISOString()}
                   date={date}
                   posts={posts}
-                  schedules={schedules}
+                  schedules={schedules || []}
                   isToday={isToday}
                   isSelected={isSelected}
                   onDateClick={setSelectedDate}
@@ -167,24 +173,6 @@ export function CalendarGrid({
           </div>
         </CardContent>
       </Card>
-
-      {/* Post Details Dialog */}
-      <PostDetailsDialog
-        isOpen={isPostDialogOpen}
-        onClose={() => setIsPostDialogOpen(false)}
-        post={selectedPost}
-        schedules={schedules}
-        onUpdatePost={onUpdatePost}
-        onDeletePost={onDeletePost}
-      />
-
-      {/* Schedule Details Dialog */}
-      <ScheduleDetailsDialog
-        isOpen={isScheduleDialogOpen}
-        onClose={() => setIsScheduleDialogOpen(false)}
-        schedule={selectedSchedule}
-        onDeleteSchedule={onDeleteSchedule}
-      />
     </>
   );
 }

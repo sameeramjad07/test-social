@@ -4,7 +4,17 @@ export interface Post {
   content: string;
   platform: string;
   date: Date;
-  status: "draft" | "scheduled" | "published" | "failed";
+  status:
+    | "DRAFT"
+    | "CONTENT_PENDING_APPROVAL"
+    | "CONTENT_APPROVED"
+    | "IMAGE_GENERATION_PENDING"
+    | "IMAGE_PENDING_APPROVAL"
+    | "APPROVED"
+    | "SCHEDULED"
+    | "PUBLISHING"
+    | "PUBLISHED"
+    | "FAILED";
   type: "image" | "video" | "text";
   engagement?: { likes: number; comments: number; shares: number };
   scheduleId?: string;

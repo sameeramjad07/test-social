@@ -1,19 +1,20 @@
+// src/components/calendar/calendar-day.tsx
 "use client";
 
 import { motion } from "framer-motion";
 import { Badge } from "@/components/ui/badge";
 import { PostEntry } from "./post-entry";
-import type { Post, Schedule } from "@/types/calendar";
+import type { Post } from "@prisma/client";
 
 interface CalendarDayProps {
   date: Date;
-  posts: Post[];
-  schedules: Schedule[];
+  posts: any[];
+  schedules: any[];
   isToday: boolean;
   isSelected: boolean;
   onDateClick: (date: Date) => void;
-  onPostClick: (post: Post) => void;
-  onScheduleClick: (schedule: Schedule) => void;
+  onPostClick: (post: any) => void;
+  onScheduleClick: (schedule: any) => void;
 }
 
 export function CalendarDay({
@@ -27,14 +28,14 @@ export function CalendarDay({
   onScheduleClick,
 }: CalendarDayProps) {
   // Group posts by schedule
-  const postsBySchedule = posts.reduce((acc, post) => {
+  const postsBySchedule = posts.reduce<Record<string, Post[]>>((acc, post) => {
     const key = post.scheduleId || "individual";
     if (!acc[key]) {
       acc[key] = [];
     }
     acc[key].push(post);
     return acc;
-  }, {} as Record<string, Post[]>);
+  }, {});
 
   return (
     <motion.div
@@ -65,7 +66,7 @@ export function CalendarDay({
         {Object.entries(postsBySchedule).map(([scheduleKey, schedulePosts]) => {
           if (scheduleKey === "individual") {
             // Show individual posts
-            return schedulePosts.map((post) => (
+            return schedulePosts.map((post: Post) => (
               <PostEntry
                 key={post.id}
                 post={post}

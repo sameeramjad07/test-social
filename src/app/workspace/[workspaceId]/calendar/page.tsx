@@ -1,3 +1,4 @@
+// app/workspace/[workspaceId]/calendar/page.tsx
 "use client";
 
 import { useState } from "react";
@@ -14,22 +15,25 @@ import {
 import { CalendarGrid } from "@/components/calendar/calendar-grid";
 import { CalendarSidebar } from "@/components/calendar/calendar-sidebar";
 import { CreatePostDialog } from "@/components/calendar/create-post-dialog";
-import { useCalendarData } from "@/hooks/use-calendar-data";
+import { api } from "@/trpc/react";
+import { useParams } from "next/navigation";
 
 export default function CalendarPage() {
-  const [currentDate, setCurrentDate] = useState(new Date());
+  const params = useParams<{ workspaceId: string }>();
+  const workspaceId = params.workspaceId;
+  const [currentDate, setCurrentDate] = useState(new Date(2025, 7, 11)); // August 11, 2025 (month index 7)
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [viewMode, setViewMode] = useState<"month" | "week" | "day">("month");
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
-  const {
-    scheduledPosts,
-    schedules,
-    addPost,
-    updatePost,
-    deletePost,
-    deleteSchedule,
-  } = useCalendarData();
+  const { data: scheduledPosts } = api.posts.list.useQuery({
+    workspaceId,
+    scheduled: true,
+  });
+
+  const { data: schedules } = api.schedules.list.useQuery({
+    workspaceId,
+  });
 
   const navigateMonth = (direction: "prev" | "next") => {
     setCurrentDate((prev) => {
@@ -106,12 +110,9 @@ export default function CalendarPage() {
               currentDate={currentDate}
               selectedDate={selectedDate}
               setSelectedDate={setSelectedDate}
-              scheduledPosts={scheduledPosts}
-              schedules={schedules}
+              scheduledPosts={scheduledPosts || []}
+              schedules={schedules || []}
               navigateMonth={navigateMonth}
-              onUpdatePost={updatePost}
-              onDeletePost={deletePost}
-              onDeleteSchedule={deleteSchedule}
             />
           </motion.div>
 
@@ -123,12 +124,8 @@ export default function CalendarPage() {
             className="space-y-6"
           >
             <CalendarSidebar
-              scheduledPosts={scheduledPosts}
-              schedules={schedules}
+              scheduledPosts={scheduledPosts || []}
               selectedDate={selectedDate}
-              onUpdatePost={updatePost}
-              onDeletePost={deletePost}
-              onDeleteSchedule={deleteSchedule}
             />
           </motion.div>
         </div>
@@ -137,8 +134,7 @@ export default function CalendarPage() {
         <CreatePostDialog
           isOpen={isCreateModalOpen}
           onClose={() => setIsCreateModalOpen(false)}
-          onCreatePost={addPost}
-          schedules={schedules}
+          workspaceId={workspaceId}
         />
       </div>
     </div>

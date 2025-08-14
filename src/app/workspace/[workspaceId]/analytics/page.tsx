@@ -38,6 +38,13 @@ import { motion } from "framer-motion";
 type TimeRange = "7d" | "30d" | "90d" | "1y";
 type Platform = "INSTAGRAM" | "FACEBOOK" | "LINKEDIN" | "all";
 
+interface PlatformIcons {
+  INSTAGRAM: LucideIcon;
+  FACEBOOK: LucideIcon;
+  LINKEDIN: LucideIcon;
+}
+import type { LucideIcon } from "lucide-react";
+
 export default function AnalyticsPage() {
   const params = useParams<{ workspaceId: string }>();
   const workspaceId = params.workspaceId;
@@ -58,6 +65,14 @@ export default function AnalyticsPage() {
     INSTAGRAM: Instagram,
     FACEBOOK: Facebook,
     LINKEDIN: Linkedin,
+  };
+
+  // Map string icon names from analytics to LucideIcon components
+  const iconMap: { [key: string]: LucideIcon } = {
+    Eye,
+    Heart,
+    Users,
+    BarChart3,
   };
 
   return (
@@ -85,7 +100,10 @@ export default function AnalyticsPage() {
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <Select value={timeRange} onValueChange={setTimeRange}>
+              <Select
+                value={timeRange}
+                onValueChange={(value) => setTimeRange(value as TimeRange)}
+              >
                 <SelectTrigger className="w-32">
                   <SelectValue />
                 </SelectTrigger>
@@ -111,46 +129,47 @@ export default function AnalyticsPage() {
           transition={{ duration: 0.5, delay: 0.1 }}
           className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8"
         >
-          {analytics.overviewStats.map((stat, index) => (
-            <Card
-              key={index}
-              className="border-0 shadow-lg bg-white/80 backdrop-blur-sm dark:bg-slate-900/80"
-            >
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-slate-600 dark:text-slate-400">
-                      {stat.title}
-                    </p>
-                    <p className="text-2xl font-bold text-slate-900 dark:text-slate-100">
-                      {stat.value}
-                    </p>
-                    <div className="flex items-center gap-1 mt-1">
-                      {stat.trend === "up" ? (
-                        <TrendingUp className="w-4 h-4 text-green-600" />
-                      ) : (
-                        <TrendingDown className="w-4 h-4 text-red-600" />
-                      )}
-                      <span
-                        className={`text-sm ${
-                          stat.trend === "up"
-                            ? "text-green-600"
-                            : "text-red-600"
-                        }`}
-                      >
-                        {stat.change}
-                      </span>
+          {analytics.overviewStats.map((stat, index) => {
+            const Icon = iconMap[stat.icon];
+            return (
+              <Card
+                key={index}
+                className="border-0 shadow-lg bg-white/80 backdrop-blur-sm dark:bg-slate-900/80"
+              >
+                <CardContent className="p-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-slate-600 dark:text-slate-400">
+                        {stat.title}
+                      </p>
+                      <p className="text-2xl font-bold text-slate-900 dark:text-slate-100">
+                        {stat.value}
+                      </p>
+                      <div className="flex items-center gap-1 mt-1">
+                        {stat.trend === "up" ? (
+                          <TrendingUp className="w-4 h-4 text-green-600" />
+                        ) : (
+                          <TrendingDown className="w-4 h-4 text-red-600" />
+                        )}
+                        <span
+                          className={`text-sm ${
+                            stat.trend === "up"
+                              ? "text-green-600"
+                              : "text-red-600"
+                          }`}
+                        >
+                          {stat.change}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="w-12 h-12 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl flex items-center justify-center">
+                      {Icon && <Icon className="w-6 h-6 text-white" />}
                     </div>
                   </div>
-                  <div
-                    className={`w-12 h-12 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl flex items-center justify-center`}
-                  >
-                    <stat.icon className="w-6 h-6 text-white" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                </CardContent>
+              </Card>
+            );
+          })}
         </motion.div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -169,51 +188,57 @@ export default function AnalyticsPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                {analytics.platformStats.map((platform, index) => (
-                  <motion.div
-                    key={platform.platform}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: index * 0.1 }}
-                    className="flex items-center justify-between p-4 border rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
-                  >
-                    <div className="flex items-center gap-4">
-                      <div
-                        className={`w-12 h-12 bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg flex items-center justify-center`}
-                      >
-                        <platformIcons[platform.platform] className="w-6 h-6 text-white" />
-                      </div>
-                      <div>
-                        <p className="font-medium">{platform.platform}</p>
-                        <span className="text-sm text-slate-500">
-                          {platform.followers} followers
-                        </span>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-3 gap-4 text-center">
-                      <div>
-                        <p className="text-sm font-medium">
-                          {platform.engagement}
-                        </p>
-                        <p className="text-xs text-slate-500">Engagement</p>
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium">{platform.reach}</p>
-                        <p className="text-xs text-slate-500">Reach</p>
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium">{platform.posts}</p>
-                        <p className="text-xs text-slate-500">Posts</p>
-                      </div>
-                    </div>
-                    <Badge
-                      variant="secondary"
-                      className="bg-green-100 text-green-700"
+                {analytics.platformStats.map((platform, index) => {
+                  const Icon =
+                    platformIcons[platform.platform as keyof PlatformIcons];
+                  return (
+                    <motion.div
+                      key={platform.platform}
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: index * 0.1 }}
+                      className="flex items-center justify-between p-4 border rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
                     >
-                      {platform.change}
-                    </Badge>
-                  </motion.div>
-                ))}
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg flex items-center justify-center">
+                          {Icon && <Icon className="w-6 h-6 text-white" />}
+                        </div>
+                        <div>
+                          <p className="font-medium">{platform.platform}</p>
+                          <span className="text-sm text-slate-500">
+                            {platform.followers} followers
+                          </span>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-3 gap-4 text-center">
+                        <div>
+                          <p className="text-sm font-medium">
+                            {platform.engagement}
+                          </p>
+                          <p className="text-xs text-slate-500">Engagement</p>
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium">
+                            {platform.reach}
+                          </p>
+                          <p className="text-xs text-slate-500">Reach</p>
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium">
+                            {platform.posts}
+                          </p>
+                          <p className="text-xs text-slate-500">Posts</p>
+                        </div>
+                      </div>
+                      <Badge
+                        variant="secondary"
+                        className="bg-green-100 text-green-700"
+                      >
+                        {platform.change}
+                      </Badge>
+                    </motion.div>
+                  );
+                })}
               </CardContent>
             </Card>
           </motion.div>

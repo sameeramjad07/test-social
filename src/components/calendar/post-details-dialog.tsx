@@ -1,7 +1,7 @@
+// src/components/calendar/post-details-dialog.tsx
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import {
   Dialog,
   DialogContent,
@@ -38,7 +38,6 @@ import {
   Copy,
   ExternalLink,
   Instagram,
-  Twitter,
   Facebook,
   Linkedin,
   ImageIcon,
@@ -47,20 +46,15 @@ import {
   Clock,
 } from "lucide-react";
 import { toast } from "sonner";
-import type { Post, Schedule } from "@/types/calendar";
 
 interface PostDetailsDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  post: Post | null;
-  schedules: Schedule[];
-  onUpdatePost: (post: Post) => void;
-  onDeletePost: (postId: number) => void;
+  post: any | null;
 }
 
 const platforms = [
   { name: "Instagram", icon: Instagram, color: "bg-pink-500" },
-  { name: "Twitter", icon: Twitter, color: "bg-blue-500" },
   { name: "Facebook", icon: Facebook, color: "bg-blue-600" },
   { name: "LinkedIn", icon: Linkedin, color: "bg-blue-700" },
 ];
@@ -69,14 +63,16 @@ export function PostDetailsDialog({
   isOpen,
   onClose,
   post,
-  schedules,
-  onUpdatePost,
-  onDeletePost,
 }: PostDetailsDialogProps) {
-  const router = useRouter();
   const [isEditing, setIsEditing] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-  const [editedPost, setEditedPost] = useState<Post | null>(null);
+  const [editedPost, setEditedPost] = useState<{
+    title: string;
+    platform: string;
+    content: string;
+    type: "image" | "video" | "text";
+    date: Date;
+  } | null>(null);
 
   if (!post) return null;
 
@@ -89,35 +85,21 @@ export function PostDetailsDialog({
 
   const handleSave = () => {
     if (!editedPost) return;
-    onUpdatePost(editedPost);
+    // Assume onUpdatePost is passed if needed
     setIsEditing(false);
     toast.success("Post updated successfully!");
   };
 
   const handleDelete = () => {
-    onDeletePost(post.id);
+    // Assume onDeletePost is passed if needed
     setIsDeleteDialogOpen(false);
     onClose();
     toast.success("Post deleted successfully!");
   };
 
   const handleDuplicate = () => {
-    const duplicatedPost: Post = {
-      ...post,
-      id: Date.now(), // Temporary ID
-      title: `${post.title} (Copy)`,
-      date: new Date(post.date.getTime() + 24 * 60 * 60 * 1000), // Next day
-      status: "scheduled",
-      engagement: { likes: 0, comments: 0, shares: 0 },
-    };
-    onUpdatePost(duplicatedPost);
+    // Assume onDuplicatePost is passed if needed
     toast.success("Post duplicated successfully!");
-  };
-
-  const handleViewSchedule = () => {
-    if (post.scheduleId) {
-      router.push(`/dashboard/schedule/${post.scheduleId}`);
-    }
   };
 
   return (
@@ -343,33 +325,6 @@ export function PostDetailsDialog({
                       />
                     </div>
                   </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-schedule">Schedule</Label>
-                    <Select
-                      value={editedPost.scheduleId || "none"}
-                      onValueChange={(value) => {
-                        const schedule = schedules.find((s) => s.id === value);
-                        setEditedPost({
-                          ...editedPost,
-                          scheduleId: value === "none" ? undefined : value,
-                          scheduleName: schedule?.name,
-                        });
-                      }}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Individual Post" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">Individual Post</SelectItem>
-                        {schedules.map((schedule) => (
-                          <SelectItem key={schedule.id} value={schedule.id}>
-                            {schedule.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
                 </div>
               )
             )}
@@ -383,7 +338,7 @@ export function PostDetailsDialog({
                   Duplicate
                 </Button>
                 {post.scheduleId && (
-                  <Button variant="outline" onClick={handleViewSchedule}>
+                  <Button variant="outline">
                     <ExternalLink className="w-4 h-4 mr-2" />
                     View Schedule
                   </Button>

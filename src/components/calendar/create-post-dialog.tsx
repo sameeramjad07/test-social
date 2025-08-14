@@ -20,20 +20,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Instagram, Twitter, Facebook, Linkedin } from "lucide-react";
+import { Instagram, Facebook, Linkedin } from "lucide-react";
 import { toast } from "sonner";
+import { api } from "@/trpc/react";
 import type { Post, Schedule } from "@/types/calendar";
+import { PostStatus } from "@prisma/client";
 
 interface CreatePostDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  onCreatePost: (post: Omit<Post, "id">) => void;
-  schedules: Schedule[];
+  workspaceId: string;
 }
 
 const platforms = [
   { name: "Instagram", icon: Instagram },
-  { name: "Twitter", icon: Twitter },
   { name: "Facebook", icon: Facebook },
   { name: "LinkedIn", icon: Linkedin },
 ];
@@ -41,8 +41,7 @@ const platforms = [
 export function CreatePostDialog({
   isOpen,
   onClose,
-  onCreatePost,
-  schedules,
+  workspaceId,
 }: CreatePostDialogProps) {
   const [newPost, setNewPost] = useState({
     title: "",
@@ -54,9 +53,31 @@ export function CreatePostDialog({
     scheduleId: "",
   });
 
+  const { data: schedules } = api.schedules.list.useQuery({
+    workspaceId,
+  });
+
+  const createPostMutation = api.posts.create.useMutation({
+    onSuccess: () => {
+      toast.success("Post scheduled successfully!");
+      onClose();
+      setNewPost({
+        title: "",
+        content: "",
+        platform: "",
+        date: "",
+        time: "",
+        type: "text",
+        scheduleId: "",
+      });
+    },
+    onError: (error) => {
+      toast.error(`Failed to schedule post: ${error.message}`);
+    },
+  });
+
   const handleCreatePost = () => {
     if (
-      !newPost.title ||
       !newPost.content ||
       !newPost.platform ||
       !newPost.date ||
@@ -68,37 +89,31 @@ export function CreatePostDialog({
 
     const dateTime = new Date(`${newPost.date}T${newPost.time}`);
 
-    const postData: Omit<Post, "id"> = {
-      title: newPost.title,
-      content: newPost.content,
-      platform: newPost.platform,
-      date: dateTime,
-      status: "scheduled",
-      type: newPost.type,
-      engagement: { likes: 0, comments: 0, shares: 0 },
-    };
-
-    // If a schedule was selected, associate the post with it
-    if (newPost.scheduleId && newPost.scheduleId !== "none") {
-      const schedule = schedules.find((s) => s.id === newPost.scheduleId);
-      if (schedule) {
-        postData.scheduleId = schedule.id;
-        postData.scheduleName = schedule.name;
-      }
+    // Map platform name to its corresponding socialAccountId
+    const selectedAccount = schedules?.find(
+      (acc) => acc.name === newPost.platform
+    );
+    if (!selectedAccount) {
+      toast.error("Invalid platform selected");
+      return;
     }
 
-    onCreatePost(postData);
-    toast.success("Post scheduled successfully!");
-    onClose();
-    setNewPost({
-      title: "",
-      content: "",
-      platform: "",
-      date: "",
-      time: "",
-      type: "text",
-      scheduleId: "",
-    });
+    const postData = {
+      workspaceId,
+      content: newPost.content,
+      caption: newPost.title || undefined,
+      hashtags: [], // populate if needed
+      mentions: [], // populate if needed
+      socialAccountIds: [selectedAccount.id],
+      images: [], // populate if uploading images
+      scheduleId:
+        newPost.scheduleId && newPost.scheduleId !== "none"
+          ? newPost.scheduleId
+          : undefined,
+      status: PostStatus.SCHEDULED, // or PostStatus.SCHEDULED if you import it
+    };
+
+    createPostMutation.mutate(postData);
   };
 
   return (
@@ -217,7 +232,7 @@ export function CreatePostDialog({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="none">None (Individual Post)</SelectItem>
-                {schedules.map((schedule) => (
+                {schedules?.map((schedule) => (
                   <SelectItem key={schedule.id} value={schedule.id}>
                     {schedule.name}
                   </SelectItem>
@@ -233,8 +248,9 @@ export function CreatePostDialog({
           <Button
             onClick={handleCreatePost}
             className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
+            disabled={createPostMutation.isPending}
           >
-            Schedule Post
+            {createPostMutation.isPending ? "Scheduling..." : "Schedule Post"}
           </Button>
         </DialogFooter>
       </DialogContent>

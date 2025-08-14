@@ -1,3 +1,4 @@
+// src/components/calendar/calendar-sidebar.tsx
 "use client";
 
 import {
@@ -16,6 +17,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { api } from "@/trpc/react";
+import { useParams } from "next/navigation";
 import {
   Clock,
   Calendar,
@@ -24,57 +27,42 @@ import {
   Trash2,
   Copy,
   Instagram,
-  Twitter,
   Facebook,
   Linkedin,
 } from "lucide-react";
+import { PostStatus } from "@prisma/client";
 import { toast } from "sonner";
-import type { Post, Schedule } from "@/types/calendar";
 
 interface CalendarSidebarProps {
-  scheduledPosts: Post[];
-  schedules: Schedule[];
   selectedDate: Date | null;
-  onUpdatePost: (post: Post) => void;
-  onDeletePost: (postId: number) => void;
-  onDeleteSchedule: (scheduleId: string) => void;
+  scheduledPosts: any[];
 }
 
-const platforms = [
-  { name: "Instagram", icon: Instagram, color: "bg-pink-500" },
-  { name: "Twitter", icon: Twitter, color: "bg-blue-500" },
-  { name: "Facebook", icon: Facebook, color: "bg-blue-600" },
-  { name: "LinkedIn", icon: Linkedin, color: "bg-blue-700" },
-];
-
 export function CalendarSidebar({
-  scheduledPosts,
-  schedules,
   selectedDate,
-  onUpdatePost,
-  onDeletePost,
-  onDeleteSchedule,
+  scheduledPosts: initialScheduledPosts,
 }: CalendarSidebarProps) {
-  const handleDuplicatePost = (postId: number) => {
-    const postToDuplicate = scheduledPosts.find((post) => post.id === postId);
-    if (!postToDuplicate) return;
+  const params = useParams<{ workspaceId: string }>();
+  const workspaceId = params.workspaceId;
+  const { data: scheduledPosts } = api.posts.list.useQuery({
+    workspaceId,
+    scheduled: true,
+  });
 
-    const duplicatedPost: Post = {
-      ...postToDuplicate,
-      id: Date.now(),
-      title: `${postToDuplicate.title} (Copy)`,
-      date: new Date(postToDuplicate.date.getTime() + 24 * 60 * 60 * 1000),
-      status: "scheduled",
-      engagement: { likes: 0, comments: 0, shares: 0 },
-    };
+  const { data: schedules } = api.schedules.list.useQuery({
+    workspaceId,
+  });
 
-    onUpdatePost(duplicatedPost);
-    toast.success("Post duplicated successfully!");
-  };
+  const platforms = [
+    { name: "Instagram", icon: Instagram, color: "bg-pink-500" },
+    { name: "Facebook", icon: Facebook, color: "bg-blue-600" },
+    { name: "LinkedIn", icon: Linkedin, color: "bg-blue-700" },
+  ];
 
-  const todaysPosts = scheduledPosts.filter(
-    (post) => post.date.toDateString() === new Date().toDateString()
-  );
+  const todaysPosts =
+    scheduledPosts?.filter(
+      (post) => post.scheduledAt?.toDateString() === new Date().toDateString()
+    ) || [];
 
   return (
     <div className="space-y-6">
@@ -87,18 +75,24 @@ export function CalendarSidebar({
         <CardContent>
           <div className="space-y-3">
             {todaysPosts.map((post) => {
-              const platform = platforms.find((p) => p.name === post.platform);
+              const platform = platforms.find((p) =>
+                post.socialAccounts.some(
+                  (account) => account.platform === p.name
+                )
+              );
               return (
                 <div key={post.id} className="p-3 border rounded-lg">
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
                       {platform && <platform.icon className="w-4 h-4" />}
                       <span className="text-sm font-medium">
-                        {post.platform}
+                        {platform?.name || "Unknown Platform"}
                       </span>
                       <Badge
                         variant={
-                          post.status === "published" ? "default" : "secondary"
+                          post.status === PostStatus.PUBLISHED
+                            ? "default"
+                            : "secondary"
                         }
                         className="text-xs"
                       >
@@ -120,17 +114,12 @@ export function CalendarSidebar({
                           <Edit className="mr-2 h-4 w-4" />
                           Edit
                         </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() => handleDuplicatePost(post.id)}
-                        >
+                        <DropdownMenuItem>
                           <Copy className="mr-2 h-4 w-4" />
                           Duplicate
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          onClick={() => onDeletePost(post.id)}
-                          className="text-red-600"
-                        >
+                        <DropdownMenuItem className="text-red-600">
                           <Trash2 className="mr-2 h-4 w-4" />
                           Delete
                         </DropdownMenuItem>
@@ -142,10 +131,14 @@ export function CalendarSidebar({
                   </p>
                   <div className="flex items-center gap-2 text-xs text-slate-500">
                     <Clock className="w-3 h-3" />
-                    {post.date.toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
+                    <span>
+                      {post.scheduledAt
+                        ? post.scheduledAt.toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })
+                        : "No time scheduled"}
+                    </span>
                   </div>
                 </div>
               );
@@ -167,7 +160,7 @@ export function CalendarSidebar({
         </CardHeader>
         <CardContent>
           <div className="space-y-3">
-            {schedules.map((schedule) => (
+            {schedules?.map((schedule) => (
               <div key={schedule.id} className="p-3 border rounded-lg">
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="font-medium text-sm">{schedule.name}</h3>
@@ -182,10 +175,7 @@ export function CalendarSidebar({
                         <Edit className="mr-2 h-4 w-4" />
                         Edit Schedule
                       </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => onDeleteSchedule(schedule.id)}
-                        className="text-red-600"
-                      >
+                      <DropdownMenuItem className="text-red-600">
                         <Trash2 className="mr-2 h-4 w-4" />
                         Delete Schedule
                       </DropdownMenuItem>
@@ -194,14 +184,14 @@ export function CalendarSidebar({
                 </div>
                 <div className="flex items-center gap-2 text-xs text-slate-500">
                   <Calendar className="w-3 h-3" />
-                  <span>{schedule.posts.length} posts</span>
+                  <span>{schedule.totalPosts} posts</span>
                   <Badge variant="outline" className="text-xs">
                     {schedule.status}
                   </Badge>
                 </div>
               </div>
             ))}
-            {schedules.length === 0 && (
+            {schedules?.length === 0 && (
               <p className="text-sm text-slate-500 text-center py-4">
                 No active schedules
               </p>
@@ -222,7 +212,11 @@ export function CalendarSidebar({
                 Scheduled Posts
               </span>
               <span className="font-medium">
-                {scheduledPosts.filter((p) => p.status === "scheduled").length}
+                {
+                  scheduledPosts?.filter(
+                    (p) => p.status === ("scheduled" as PostStatus)
+                  ).length
+                }
               </span>
             </div>
             <div className="flex justify-between">
@@ -231,10 +225,11 @@ export function CalendarSidebar({
               </span>
               <span className="font-medium">
                 {
-                  scheduledPosts.filter(
+                  scheduledPosts?.filter(
                     (p) =>
-                      p.status === "published" &&
-                      p.date.toDateString() === new Date().toDateString()
+                      p.status === PostStatus.PUBLISHED &&
+                      p.publishedAt?.toDateString() ===
+                        new Date().toDateString()
                   ).length
                 }
               </span>
@@ -243,13 +238,13 @@ export function CalendarSidebar({
               <span className="text-sm text-slate-600 dark:text-slate-400">
                 Active Schedules
               </span>
-              <span className="font-medium">{schedules.length}</span>
+              <span className="font-medium">{schedules?.length}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-sm text-slate-600 dark:text-slate-400">
                 Total Posts
               </span>
-              <span className="font-medium">{scheduledPosts.length}</span>
+              <span className="font-medium">{scheduledPosts?.length}</span>
             </div>
           </div>
         </CardContent>

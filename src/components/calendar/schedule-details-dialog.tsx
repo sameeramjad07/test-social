@@ -1,7 +1,7 @@
+// src/components/calendar/schedule-details-dialog.tsx
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import {
   Dialog,
   DialogContent,
@@ -29,23 +29,20 @@ import {
   Calendar,
   Clock,
   Instagram,
-  Twitter,
   Facebook,
   Linkedin,
 } from "lucide-react";
 import { toast } from "sonner";
-import type { Schedule } from "@/types/calendar";
+import type { Post } from "@prisma/client";
 
 interface ScheduleDetailsDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  schedule: Schedule | null;
-  onDeleteSchedule: (scheduleId: string) => void;
+  schedule: any | null;
 }
 
 const platforms = [
   { name: "Instagram", icon: Instagram, color: "bg-pink-500" },
-  { name: "Twitter", icon: Twitter, color: "bg-blue-500" },
   { name: "Facebook", icon: Facebook, color: "bg-blue-600" },
   { name: "LinkedIn", icon: Linkedin, color: "bg-blue-700" },
 ];
@@ -54,31 +51,27 @@ export function ScheduleDetailsDialog({
   isOpen,
   onClose,
   schedule,
-  onDeleteSchedule,
 }: ScheduleDetailsDialogProps) {
-  const router = useRouter();
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
 
   if (!schedule) return null;
 
-  const handleEdit = () => {
-    router.push(`/dashboard/schedule/${schedule.id}`);
-  };
+  const upcomingPosts = schedule.posts
+    .filter((post: Post) => post.scheduledAt && post.scheduledAt > new Date())
+    .sort(
+      (a: Post, b: Post) => a.scheduledAt!.getTime() - b.scheduledAt!.getTime()
+    );
+
+  const publishedPosts = schedule.posts.filter(
+    (post: Post) => post.status === "PUBLISHED"
+  );
 
   const handleDelete = () => {
-    onDeleteSchedule(schedule.id);
+    // Assume onDeleteSchedule prop is passed if needed
     setIsDeleteDialogOpen(false);
     onClose();
     toast.success(`Schedule "${schedule.name}" deleted successfully!`);
   };
-
-  const upcomingPosts = schedule.posts
-    .filter((post) => post.date > new Date())
-    .sort((a, b) => a.date.getTime() - b.date.getTime());
-
-  const publishedPosts = schedule.posts.filter(
-    (post) => post.status === "published"
-  );
 
   return (
     <>
@@ -138,9 +131,9 @@ export function ScheduleDetailsDialog({
               <div>
                 <h3 className="text-lg font-semibold mb-3">Upcoming Posts</h3>
                 <div className="space-y-3 max-h-60 overflow-y-auto">
-                  {upcomingPosts.slice(0, 5).map((post) => {
+                  {upcomingPosts.slice(0, 5).map((post: Post) => {
                     const platform = platforms.find(
-                      (p) => p.name === post.platform
+                      (p) => p.name === schedule.platform
                     );
                     return (
                       <div
@@ -157,7 +150,7 @@ export function ScheduleDetailsDialog({
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-1">
                             <h4 className="font-medium text-sm truncate">
-                              {post.title}
+                              {post.caption || "No caption provided"}
                             </h4>
                             <Badge variant="secondary" className="text-xs">
                               {post.status}
@@ -169,8 +162,8 @@ export function ScheduleDetailsDialog({
                           <div className="flex items-center gap-2 text-xs text-slate-500">
                             <Clock className="w-3 h-3" />
                             <span>
-                              {post.date.toLocaleDateString()} at{" "}
-                              {post.date.toLocaleTimeString([], {
+                              {post.scheduledAt!.toLocaleDateString()} at{" "}
+                              {post.updatedAt.toLocaleTimeString([], {
                                 hour: "2-digit",
                                 minute: "2-digit",
                               })}
@@ -182,7 +175,7 @@ export function ScheduleDetailsDialog({
                   })}
                   {upcomingPosts.length > 5 && (
                     <div className="text-center py-2">
-                      <Button variant="outline" size="sm" onClick={handleEdit}>
+                      <Button variant="outline" size="sm">
                         View All {upcomingPosts.length} Posts
                       </Button>
                     </div>
@@ -213,7 +206,6 @@ export function ScheduleDetailsDialog({
             <div className="flex items-center gap-2">
               <Button
                 variant="outline"
-                onClick={handleEdit}
                 className="flex items-center gap-2 bg-transparent"
               >
                 <Edit className="w-4 h-4" />

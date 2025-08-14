@@ -1,26 +1,22 @@
+// src/components/calendar/post-entry.tsx
 "use client";
-
-import type React from "react";
 
 import {
   Instagram,
-  Twitter,
   Facebook,
   Linkedin,
   ImageIcon,
   Video,
   FileText,
 } from "lucide-react";
-import type { Post } from "@/types/calendar";
 
 interface PostEntryProps {
-  post: Post;
+  post: any;
   onClick: (e: React.MouseEvent) => void;
 }
 
 const platforms = [
   { name: "Instagram", icon: Instagram, color: "bg-pink-500" },
-  { name: "Twitter", icon: Twitter, color: "bg-blue-500" },
   { name: "Facebook", icon: Facebook, color: "bg-blue-600" },
   { name: "LinkedIn", icon: Linkedin, color: "bg-blue-700" },
 ];

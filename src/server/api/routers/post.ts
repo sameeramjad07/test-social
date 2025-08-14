@@ -11,9 +11,38 @@ import {
 const listPostsSchema = z.object({
   workspaceId: z.string(),
   status: z.nativeEnum(PostStatus).optional(),
-  scheduled: z.boolean().optional(), // Filter for scheduled posts
+  scheduled: z.boolean().optional(),
   platform: z.nativeEnum(Platform).optional(),
   limit: z.number().min(1).max(100).optional().default(20),
+});
+
+const createPostSchema = z.object({
+  workspaceId: z.string(),
+  content: z.string().min(1, "Content is required"),
+  caption: z.string().optional(),
+  hashtags: z.array(z.string()).optional().default([]),
+  mentions: z.array(z.string()).optional().default([]),
+  socialAccountIds: z
+    .array(z.string())
+    .min(1, "At least one social account is required"),
+  images: z
+    .array(
+      z.object({
+        url: z.string().url(),
+        alt: z.string().optional(),
+        width: z.number().optional(),
+        height: z.number().optional(),
+        size: z.number().optional(),
+        mimeType: z.string().optional(),
+        aiPrompt: z.string().optional(),
+      })
+    )
+    .optional()
+    .default([]),
+  scheduleId: z.string().optional(),
+  status: z.nativeEnum(PostStatus).default(PostStatus.DRAFT),
+  aiPrompt: z.string().optional(),
+  aiModel: z.string().optional(),
 });
 
 export const postsRouter = createTRPCRouter({
@@ -22,6 +51,7 @@ export const postsRouter = createTRPCRouter({
     .input(
       z.object({
         postId: z.string(),
+        workspaceId: z.string(), // Added for wrapper initialization
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -79,10 +109,15 @@ export const postsRouter = createTRPCRouter({
         });
       }
 
-      if (post.status !== PostStatus.APPROVED) {
+      if (
+        post.status !== PostStatus.APPROVED ||
+        !post.contentApproved ||
+        !post.imagesApproved
+      ) {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: "Post must be approved before publishing",
+          message:
+            "Post must be fully approved (content and images) before publishing",
         });
       }
 
@@ -97,6 +132,10 @@ export const postsRouter = createTRPCRouter({
       // Publish to each connected platform
       for (const account of post.socialAccounts) {
         try {
+          if (!account.accessToken) {
+            throw new Error("No valid access token for this account");
+          }
+
           let wrapper;
           switch (account.platform) {
             case Platform.INSTAGRAM:
@@ -109,6 +148,14 @@ export const postsRouter = createTRPCRouter({
               wrapper = new LinkedInWrapper(ctx.db);
               break;
             default:
+              await ctx.db.postPublication.create({
+                data: {
+                  postId: post.id,
+                  platform: account.platform,
+                  success: false,
+                  errorMessage: `Unsupported platform: ${account.platform}`,
+                },
+              });
               continue;
           }
 
@@ -119,10 +166,7 @@ export const postsRouter = createTRPCRouter({
             mentions: post.mentions,
           };
 
-          const result = await wrapper.createPost(
-            account.accessToken!,
-            content
-          );
+          const result = await wrapper.createPost(account.accessToken, content);
 
           // Save publication result
           await ctx.db.postPublication.create({
@@ -135,8 +179,10 @@ export const postsRouter = createTRPCRouter({
             },
           });
 
-          results.push(result);
+          results.push({ platform: account.platform, ...result });
         } catch (error) {
+          const errorMessage =
+            error instanceof Error ? error.message : "Unknown error";
           console.error(`Failed to publish to ${account.platform}:`, error);
 
           await ctx.db.postPublication.create({
@@ -144,9 +190,14 @@ export const postsRouter = createTRPCRouter({
               postId: post.id,
               platform: account.platform,
               success: false,
-              errorMessage:
-                error instanceof Error ? error.message : "Unknown error",
+              errorMessage,
             },
+          });
+
+          results.push({
+            platform: account.platform,
+            success: false,
+            error: errorMessage,
           });
         }
       }
@@ -164,6 +215,117 @@ export const postsRouter = createTRPCRouter({
       return { results };
     }),
 
+  // Create a post
+  create: protectedProcedure
+    .input(createPostSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.session.user.id) {
+        throw new TRPCError({
+          code: "UNAUTHORIZED",
+          message: "User must be authenticated",
+        });
+      }
+
+      // Verify membership
+      const member = await ctx.db.workspaceMember.findFirst({
+        where: {
+          workspaceId: input.workspaceId,
+          userId: ctx.session.user.id,
+        },
+        include: {
+          role: {
+            include: {
+              permissions: {
+                include: { permission: true },
+              },
+            },
+          },
+        },
+      });
+
+      if (!member) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You are not a member of this workspace",
+        });
+      }
+
+      const hasPermission = member.role.permissions.some(
+        (rp) =>
+          rp.permission.resource === "posts" &&
+          rp.permission.action === "create"
+      );
+
+      if (!hasPermission) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You don't have permission to create posts",
+        });
+      }
+
+      // Validate socialAccountIds
+      const socialAccounts = await ctx.db.socialAccount.findMany({
+        where: {
+          id: { in: input.socialAccountIds },
+          workspaceId: input.workspaceId,
+          isActive: true,
+        },
+      });
+
+      if (socialAccounts.length !== input.socialAccountIds.length) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "One or more social accounts are invalid or not active",
+        });
+      }
+
+      // Validate scheduleId if provided
+      if (input.scheduleId) {
+        const schedule = await ctx.db.postSchedule.findUnique({
+          where: { id: input.scheduleId, workspaceId: input.workspaceId },
+        });
+        if (!schedule) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Invalid schedule ID",
+          });
+        }
+      }
+
+      // Create post with related data
+      return ctx.db.post.create({
+        data: {
+          workspaceId: input.workspaceId,
+          createdById: ctx.session.user.id,
+          content: input.content,
+          caption: input.caption,
+          hashtags: input.hashtags,
+          mentions: input.mentions,
+          status: input.status,
+          scheduledAt: input.scheduleId ? new Date() : undefined,
+          aiPrompt: input.aiPrompt,
+          aiModel: input.aiModel,
+          scheduleId: input.scheduleId,
+          socialAccounts: {
+            connect: input.socialAccountIds.map((id) => ({ id })),
+          },
+          images: {
+            create: input.images.map((img, index) => ({
+              url: img.url,
+              alt: img.alt,
+              width: img.width,
+              height: img.height,
+              size: img.size,
+              mimeType: img.mimeType,
+              aiPrompt: img.aiPrompt,
+              order: index,
+            })),
+          },
+        },
+      });
+    }),
+
+  // List posts
   list: protectedProcedure
     .input(listPostsSchema)
     .query(async ({ ctx, input }) => {
@@ -196,21 +358,47 @@ export const postsRouter = createTRPCRouter({
           content: true,
           caption: true,
           hashtags: true,
+          mentions: true,
           status: true,
           scheduledAt: true,
           publishedAt: true,
           createdAt: true,
+          contentApproved: true,
+          imagesApproved: true,
+          aiPrompt: true,
+          aiModel: true,
           socialAccounts: {
             select: {
+              id: true,
               platform: true,
               accountName: true,
+              accountImage: true,
+            },
+          },
+          images: {
+            select: {
+              id: true,
+              url: true,
+              alt: true,
+              width: true,
+              height: true,
+              mimeType: true,
+              isApproved: true,
             },
           },
           publications: {
             select: {
               platform: true,
               success: true,
+              platformPostId: true,
+              errorMessage: true,
               metrics: true,
+            },
+          },
+          schedule: {
+            select: {
+              id: true,
+              name: true,
             },
           },
         },
