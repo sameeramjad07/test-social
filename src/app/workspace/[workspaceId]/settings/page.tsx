@@ -2,11 +2,15 @@
 
 import { useSession } from "next-auth/react";
 import { useRouter, useParams } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Platform } from "@prisma/client";
 import { api } from "@/trpc/react";
 import { ConnectAccountButton } from "@/components/social-accounts/ConnectAccountButton";
 import { SocialAccountsList } from "@/components/social-accounts/SocialAccountsList";
+import { PermissionsList } from "@/components/permissions/PermissionsList";
+import { RolesList } from "@/components/permissions/RolesList";
+import { CreateRoleDialog } from "@/components/permissions/CreateRoleDialog";
+import { EditRoleDialog } from "@/components/permissions/EditRoleDialog";
 import {
   Card,
   CardContent,
@@ -15,6 +19,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog } from "@/components/ui/dialog";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 
@@ -27,10 +32,41 @@ export default function SocialAccountsPage() {
   // Fetch workspace data to verify access
   const { data: workspaces } = api.workspaces.getUserWorkspaces.useQuery(
     undefined,
-    {
-      enabled: !!session,
-    }
+    { enabled: !!session }
   );
+
+  // Fetch members, roles, and permissions
+  const { data: members, refetch: refetchMembers } =
+    api.workspaces.getMembers.useQuery(
+      { workspaceId },
+      { enabled: !!workspaceId && !!session }
+    );
+
+  const { data: roles, refetch: refetchRoles } =
+    api.workspaces.getRoles.useQuery(
+      { workspaceId },
+      { enabled: !!workspaceId && !!session }
+    );
+
+  const { data: permissions } = api.workspaces.getPermissions.useQuery(
+    undefined,
+    { enabled: !!session }
+  );
+
+  // State for role creation/editing
+  const [isCreateRoleOpen, setIsCreateRoleOpen] = useState(false);
+  const [isEditRoleOpen, setIsEditRoleOpen] = useState(false);
+  const [newRole, setNewRole] = useState({
+    name: "",
+    description: "",
+    permissions: [] as string[],
+  });
+  const [editRole, setEditRole] = useState<{
+    id: string;
+    name: string;
+    description: string;
+    permissions: string[];
+  } | null>(null);
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -53,6 +89,9 @@ export default function SocialAccountsPage() {
     return null;
   }
 
+  const isAdmin =
+    workspaces.find((ws) => ws.id === workspaceId)?.role.name === "owner";
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
       <div className="container mx-auto px-4 py-8">
@@ -63,11 +102,10 @@ export default function SocialAccountsPage() {
           className="mb-8"
         >
           <h1 className="text-3xl font-bold bg-gradient-to-r from-slate-900 to-slate-600 dark:from-slate-100 dark:to-slate-400 bg-clip-text text-transparent">
-            Social Media Accounts
+            Workspace Settings
           </h1>
           <p className="text-slate-600 dark:text-slate-400 mt-2">
-            Connect and manage your social media accounts to publish content
-            across platforms.
+            Manage social media accounts and permissions for this workspace.
           </p>
         </motion.div>
 
@@ -75,6 +113,9 @@ export default function SocialAccountsPage() {
           <TabsList className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm">
             <TabsTrigger value="connected">Connected Accounts</TabsTrigger>
             <TabsTrigger value="add">Add New Account</TabsTrigger>
+            <TabsTrigger value="permissions" disabled={!isAdmin}>
+              Permissions
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="connected" className="space-y-4">
@@ -141,6 +182,76 @@ export default function SocialAccountsPage() {
                 </div>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="permissions" className="space-y-4">
+            {!isAdmin ? (
+              <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm dark:bg-slate-900/80">
+                <CardHeader>
+                  <CardTitle>Access Denied</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-slate-600 dark:text-slate-400">
+                    Only workspace admins can manage permissions.
+                  </p>
+                </CardContent>
+              </Card>
+            ) : (
+              <>
+                <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm dark:bg-slate-900/80">
+                  <CardHeader>
+                    <CardTitle>Manage Members</CardTitle>
+                    <CardDescription>
+                      Assign roles to workspace members to control their
+                      permissions.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <PermissionsList
+                      workspaceId={workspaceId}
+                      members={members || []}
+                      roles={roles || []}
+                    />
+                  </CardContent>
+                </Card>
+
+                <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm dark:bg-slate-900/80">
+                  <CardHeader>
+                    <CardTitle>Manage Roles</CardTitle>
+                    <CardDescription>
+                      Create or edit roles and their permissions.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Dialog>
+                      <RolesList
+                        workspaceId={workspaceId}
+                        roles={roles || []}
+                        setEditRole={setEditRole}
+                        setIsCreateRoleOpen={setIsCreateRoleOpen}
+                        setIsEditRoleOpen={setIsEditRoleOpen}
+                      />
+                      <CreateRoleDialog
+                        workspaceId={workspaceId}
+                        permissions={permissions || []}
+                        isOpen={isCreateRoleOpen}
+                        setIsOpen={setIsCreateRoleOpen}
+                        newRole={newRole}
+                        setNewRole={setNewRole}
+                      />
+                      <EditRoleDialog
+                        workspaceId={workspaceId}
+                        permissions={permissions || []}
+                        isOpen={isEditRoleOpen}
+                        setIsOpen={setIsEditRoleOpen}
+                        editRole={editRole}
+                        setEditRole={setEditRole}
+                      />
+                    </Dialog>
+                  </CardContent>
+                </Card>
+              </>
+            )}
           </TabsContent>
         </Tabs>
       </div>

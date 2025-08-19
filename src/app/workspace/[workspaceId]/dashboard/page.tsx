@@ -96,7 +96,7 @@ export default function WorkspaceDashboardPage() {
     },
     {
       title: "Draft Schedules",
-      value: schedules.filter((s) => s.status === "draft").length.toString(),
+      value: schedules.filter((s) => s.isActive === false).length.toString(),
       change: "0",
       icon: FileText,
     },

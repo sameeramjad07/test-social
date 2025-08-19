@@ -17,7 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
-import { Plus, Edit, Trash } from "lucide-react";
+import { Plus, Edit, Trash, Settings } from "lucide-react";
 
 export default function WorkspacesPage() {
   const { data: session, status } = useSession();
@@ -178,6 +178,15 @@ export default function WorkspacesPage() {
                       className="flex-1 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
                     >
                       Dashboard
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() =>
+                        router.push(`/workspace/${ws.id}/settings`)
+                      }
+                    >
+                      <Settings className="h-4 w-4 text-blue-600" />
                     </Button>
                     <Button
                       size="icon"

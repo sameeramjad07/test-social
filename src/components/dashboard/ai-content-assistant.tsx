@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect } from "react";
 import { api } from "@/trpc/react";
 import {
   Card,
@@ -11,7 +10,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Sparkles, Plus, Zap, FileText, Play, Pause } from "lucide-react";
+import { Sparkles, Plus, Play, FileText } from "lucide-react";
 import { ScheduleCard } from "./schedule-card";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
@@ -23,7 +22,7 @@ interface Schedule {
   duration: number | null;
   durationType: "days" | "weeks" | "months";
   frequency: string;
-  status: "draft" | "active" | "paused" | "completed";
+  isActive: boolean;
   createdAt: Date;
   postsGenerated: number;
   totalPosts: number;
@@ -46,17 +45,9 @@ export function AIContentAssistant({
     { enabled: !!workspaceId }
   );
 
-  const pauseMutation = api.schedules.update.useMutation({
-    onSuccess: () => {
-      toast.success("Schedule paused");
-      refetch();
-    },
-    onError: (error) => toast.error(error.message),
-  });
-
-  const resumeMutation = api.schedules.update.useMutation({
-    onSuccess: () => {
-      toast.success("Schedule resumed");
+  const updateMutation = api.schedules.update.useMutation({
+    onSuccess: (_, { isActive }) => {
+      toast.success(`Schedule ${isActive ? "activated" : "saved as draft"}`);
       refetch();
     },
     onError: (error) => toast.error(error.message),
@@ -70,38 +61,20 @@ export function AIContentAssistant({
     onError: (error) => toast.error(error.message),
   });
 
-  // const draftSchedules = schedules?.filter((s) => s.status === "draft") || [];
   const draftSchedules: Schedule[] =
     schedules
-      ?.filter((s) => s.status === "draft")
+      ?.filter((s) => !s.isActive)
       .map((s) => ({
         ...s,
         durationType: s.durationType as "days" | "weeks" | "months",
-        status: s.status as "draft" | "active" | "paused" | "completed",
       })) || [];
+
   const activeSchedules: Schedule[] =
     schedules
-      ?.filter((s) => s.status === "active")
+      ?.filter((s) => s.isActive)
       .map((s) => ({
         ...s,
         durationType: s.durationType as "days" | "weeks" | "months",
-        status: s.status as "draft" | "active" | "paused" | "completed",
-      })) || [];
-  const pausedSchedules: Schedule[] =
-    schedules
-      ?.filter((s) => s.status === "paused")
-      .map((s) => ({
-        ...s,
-        durationType: s.durationType as "days" | "weeks" | "months",
-        status: s.status as "draft" | "active" | "paused" | "completed",
-      })) || [];
-  const completedSchedules: Schedule[] =
-    schedules
-      ?.filter((s) => s.status === "completed")
-      .map((s) => ({
-        ...s,
-        durationType: s.durationType as "days" | "weeks" | "months",
-        status: s.status as "draft" | "active" | "paused" | "completed",
       })) || [];
 
   const ScheduleSection = ({
@@ -150,18 +123,11 @@ export function AIContentAssistant({
               onDelete={(id) =>
                 deleteMutation.mutate({ scheduleId: id, workspaceId })
               }
-              onPause={(id) =>
-                pauseMutation.mutate({
+              onToggleActive={(id, isActive) =>
+                updateMutation.mutate({
                   scheduleId: id,
                   workspaceId,
-                  isActive: false,
-                })
-              }
-              onResume={(id) =>
-                resumeMutation.mutate({
-                  scheduleId: id,
-                  workspaceId,
-                  isActive: true,
+                  isActive,
                 })
               }
               index={index}
@@ -201,7 +167,6 @@ export function AIContentAssistant({
           </div>
         </CardHeader>
         <CardContent className="space-y-8">
-          {/* Draft Schedules */}
           <ScheduleSection
             title="Draft Schedules"
             schedules={draftSchedules}
@@ -209,34 +174,12 @@ export function AIContentAssistant({
             emptyMessage="No draft schedules yet"
             emptyAction={onCreateSchedule}
           />
-
-          {/* Active Schedules */}
           <ScheduleSection
             title="Active Schedules"
             schedules={activeSchedules}
             icon={Play}
             emptyMessage="No active schedules running"
           />
-
-          {/* Paused Schedules */}
-          {pausedSchedules.length > 0 && (
-            <ScheduleSection
-              title="Paused Schedules"
-              schedules={pausedSchedules}
-              icon={Pause}
-              emptyMessage="No paused schedules"
-            />
-          )}
-
-          {/* Completed Schedules */}
-          {completedSchedules.length > 0 && (
-            <ScheduleSection
-              title="Completed Schedules"
-              schedules={completedSchedules}
-              icon={Zap}
-              emptyMessage="No completed schedules"
-            />
-          )}
         </CardContent>
       </Card>
     </motion.div>

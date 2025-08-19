@@ -1,4 +1,3 @@
-// src/components/dashboard/schedule-card.tsx
 "use client";
 
 import { useState } from "react";
@@ -27,7 +26,6 @@ import {
   FileText,
   Edit,
   Play,
-  Pause,
   Trash2,
   MoreHorizontal,
   Instagram,
@@ -44,7 +42,7 @@ interface Schedule {
   duration: number | null;
   durationType: string;
   frequency: string;
-  status: "draft" | "active" | "paused" | "completed";
+  isActive: boolean;
   createdAt: Date;
   postsGenerated: number;
   totalPosts: number;
@@ -55,8 +53,7 @@ interface ScheduleCardProps {
   schedule: Schedule;
   onEdit: (scheduleId: string) => void;
   onDelete: (scheduleId: string) => void;
-  onPause: (scheduleId: string) => void;
-  onResume: (scheduleId: string) => void;
+  onToggleActive: (scheduleId: string, isActive: boolean) => void;
   index: number;
 }
 
@@ -70,25 +67,15 @@ export function ScheduleCard({
   schedule,
   onEdit,
   onDelete,
-  onPause,
-  onResume,
+  onToggleActive,
   index,
 }: ScheduleCardProps) {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
-  const getStatusColor = (status: Schedule["status"]) => {
-    switch (status) {
-      case "active":
-        return "bg-green-100 text-green-700";
-      case "draft":
-        return "bg-yellow-100 text-yellow-700";
-      case "paused":
-        return "bg-orange-100 text-orange-700";
-      case "completed":
-        return "bg-blue-100 text-blue-700";
-      default:
-        return "bg-gray-100 text-gray-700";
-    }
+  const getStatusColor = (isActive: boolean) => {
+    return isActive
+      ? "bg-green-100 text-green-700"
+      : "bg-yellow-100 text-yellow-700";
   };
 
   const handleDelete = () => {
@@ -112,8 +99,8 @@ export function ScheduleCard({
                   <h3 className="font-semibold text-lg text-slate-900 dark:text-slate-100">
                     {schedule.name}
                   </h3>
-                  <Badge className={getStatusColor(schedule.status)}>
-                    {schedule.status}
+                  <Badge className={getStatusColor(schedule.isActive)}>
+                    {schedule.isActive ? "Active" : "Draft"}
                   </Badge>
                 </div>
                 <div className="flex items-center gap-2 mb-3">
@@ -149,18 +136,23 @@ export function ScheduleCard({
                     <Edit className="w-4 h-4 mr-2" />
                     Edit Schedule
                   </DropdownMenuItem>
-                  {schedule.status === "active" && (
-                    <DropdownMenuItem onClick={() => onPause(schedule.id)}>
-                      <Pause className="w-4 h-4 mr-2" />
-                      Pause Schedule
-                    </DropdownMenuItem>
-                  )}
-                  {schedule.status === "paused" && (
-                    <DropdownMenuItem onClick={() => onResume(schedule.id)}>
-                      <Play className="w-4 h-4 mr-2" />
-                      Resume Schedule
-                    </DropdownMenuItem>
-                  )}
+                  <DropdownMenuItem
+                    onClick={() =>
+                      onToggleActive(schedule.id, !schedule.isActive)
+                    }
+                  >
+                    {schedule.isActive ? (
+                      <>
+                        <Edit className="w-4 h-4 mr-2" />
+                        Save as Draft
+                      </>
+                    ) : (
+                      <>
+                        <Play className="w-4 h-4 mr-2" />
+                        Activate Schedule
+                      </>
+                    )}
+                  </DropdownMenuItem>
                   <DropdownMenuItem
                     onClick={() => setShowDeleteDialog(true)}
                     className="text-red-600"
@@ -188,27 +180,23 @@ export function ScheduleCard({
                 </div>
               </div>
 
-              {schedule.status !== "completed" && (
-                <div>
-                  <div className="flex justify-between text-sm mb-1">
-                    <span className="text-slate-600 dark:text-slate-400">
-                      Progress
-                    </span>
-                    <span className="text-slate-600 dark:text-slate-400">
-                      {Math.round(
-                        (schedule.postsGenerated / schedule.totalPosts) * 100
-                      )}
-                      %
-                    </span>
-                  </div>
-                  <Progress
-                    value={
+              <div>
+                <div className="flex justify-between text-sm mb-1">
+                  <span className="text-slate-600 dark:text-slate-400">
+                    Progress
+                  </span>
+                  <span className="text-slate-600 dark:text-slate-400">
+                    {Math.round(
                       (schedule.postsGenerated / schedule.totalPosts) * 100
-                    }
-                    className="h-2"
-                  />
+                    )}
+                    %
+                  </span>
                 </div>
-              )}
+                <Progress
+                  value={(schedule.postsGenerated / schedule.totalPosts) * 100}
+                  className="h-2"
+                />
+              </div>
 
               <div className="flex items-center justify-between pt-2">
                 <span className="text-xs text-slate-500">

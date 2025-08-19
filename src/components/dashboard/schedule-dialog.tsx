@@ -48,11 +48,12 @@ export function ScheduleCreationDialog({
     frequency: "DAILY" as ScheduleFrequency,
     weekDays: [] as number[],
     monthDays: [] as number[],
-    timeSlots: ["12:00"],
+    timeSlots: ["12:00"] as string[],
     postsPerSlot: 1,
-    contentPrompt: "",
-    imagePrompt: "",
+    contentPrompt: "" as string | undefined,
+    imagePrompt: "" as string | undefined,
     hashtags: [] as string[],
+    isActive: false,
   });
 
   const { data: socialAccounts, isLoading } = api.socialAccounts.list.useQuery(
@@ -78,7 +79,10 @@ export function ScheduleCreationDialog({
         contentPrompt: "",
         imagePrompt: "",
         hashtags: [],
+        isActive: false,
       });
+      const trpcContext = api.useContext();
+      trpcContext.schedules.list.invalidate({ workspaceId });
     },
     onError: (error) => toast.error(error.message),
   });
@@ -147,9 +151,21 @@ export function ScheduleCreationDialog({
 
     createMutation.mutate({
       workspaceId,
-      ...newSchedule,
+      name: newSchedule.name,
+      description: newSchedule.description || undefined,
+      platforms: newSchedule.platforms,
       startDate: newSchedule.startDate,
-      endDate: newSchedule.endDate || undefined,
+      endDate: newSchedule.endDate
+        ? format(new Date(newSchedule.endDate), "yyyy-MM-dd")
+        : undefined,
+      frequency: newSchedule.frequency,
+      weekDays: newSchedule.weekDays,
+      monthDays: newSchedule.monthDays,
+      timeSlots: newSchedule.timeSlots,
+      postsPerSlot: newSchedule.postsPerSlot,
+      contentPrompt: newSchedule.contentPrompt || undefined,
+      imagePrompt: newSchedule.imagePrompt || undefined,
+      hashtags: newSchedule.hashtags,
     });
   };
 
@@ -216,12 +232,11 @@ export function ScheduleCreationDialog({
                     return (
                       <div
                         key={account.platform}
-                        className={`flex items-center space-x-2 p-2 border rounded-lg cursor-pointer transition-all ${
+                        className={`flex items-center space-x-2 p-2 border rounded-lg transition-all ${
                           newSchedule.platforms.includes(account.platform)
                             ? "border-blue-500 bg-blue-50 dark:bg-blue-950"
                             : "hover:bg-slate-50 dark:hover:bg-slate-800"
                         }`}
-                        onClick={() => handlePlatformToggle(account.platform)}
                       >
                         <Checkbox
                           checked={newSchedule.platforms.includes(
@@ -230,7 +245,6 @@ export function ScheduleCreationDialog({
                           onCheckedChange={() =>
                             handlePlatformToggle(account.platform)
                           }
-                          required={newSchedule.platforms.length === 0}
                         />
                         <div
                           className={`w-7 h-7 ${color} rounded-lg flex items-center justify-center`}

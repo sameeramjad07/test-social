@@ -63,19 +63,41 @@ export const schedulesRouter = createTRPCRouter({
   list: protectedProcedure
     .input(z.object({ workspaceId: z.string() }))
     .query(async ({ ctx, input }) => {
-      // Verify user is a member of the workspace
       const member = await ctx.db.workspaceMember.findFirst({
         where: {
           workspaceId: input.workspaceId,
           userId: ctx.session.user.id,
         },
-        include: { role: true },
+        include: {
+          role: {
+            include: {
+              permissions: {
+                include: { permission: true },
+              },
+            },
+          },
+        },
       });
 
       if (!member) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "You are not a member of this workspace",
+        });
+      }
+
+      const hasPermission =
+        member.role.name === "owner" ||
+        member.role.permissions.some(
+          (rp) =>
+            rp.permission.resource === "schedules" &&
+            rp.permission.action === "read"
+        );
+
+      if (!hasPermission) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You don't have permission to view schedules",
         });
       }
 
@@ -124,11 +146,7 @@ export const schedulesRouter = createTRPCRouter({
           : null,
         durationType: "days",
         frequency: schedule.frequency.toLowerCase(),
-        status: schedule.isActive
-          ? schedule.endDate && schedule.endDate < new Date()
-            ? "completed"
-            : "active"
-          : "paused",
+        isActive: schedule.isActive,
         createdAt: schedule.createdAt,
         postsGenerated: schedule.posts.length,
         totalPosts: schedule.postsPerSlot * schedule.timeSlots.length,
@@ -165,11 +183,13 @@ export const schedulesRouter = createTRPCRouter({
         });
       }
 
-      const hasPermission = member.role.permissions.some(
-        (rp) =>
-          rp.permission.resource === "post_schedule" &&
-          rp.permission.action === "create"
-      );
+      const hasPermission =
+        member.role.name === "owner" ||
+        member.role.permissions.some(
+          (rp) =>
+            rp.permission.resource === "schedules" &&
+            rp.permission.action === "create"
+        );
 
       if (!hasPermission) {
         throw new TRPCError({
@@ -234,11 +254,13 @@ export const schedulesRouter = createTRPCRouter({
         });
       }
 
-      const hasPermission = member.role.permissions.some(
-        (rp) =>
-          rp.permission.resource === "post_schedule" &&
-          rp.permission.action === "update"
-      );
+      const hasPermission =
+        member.role.name === "owner" ||
+        member.role.permissions.some(
+          (rp) =>
+            rp.permission.resource === "schedules" &&
+            rp.permission.action === "update"
+        );
 
       if (!hasPermission) {
         throw new TRPCError({
@@ -298,11 +320,13 @@ export const schedulesRouter = createTRPCRouter({
         });
       }
 
-      const hasPermission = member.role.permissions.some(
-        (rp) =>
-          rp.permission.resource === "post_schedule" &&
-          rp.permission.action === "delete"
-      );
+      const hasPermission =
+        member.role.name === "owner" ||
+        member.role.permissions.some(
+          (rp) =>
+            rp.permission.resource === "schedules" &&
+            rp.permission.action === "delete"
+        );
 
       if (!hasPermission) {
         throw new TRPCError({
