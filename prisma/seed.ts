@@ -101,7 +101,7 @@ async function main() {
   ];
 
   const systemRoles: any[] = [];
-  
+
   // Create system roles one by one to handle the unique constraint issue
   for (const roleData of systemRolesData) {
     try {
@@ -122,7 +122,7 @@ async function main() {
       } else {
         console.log(`System role already exists: ${role.name}`);
       }
-      
+
       systemRoles.push(role);
     } catch (error) {
       console.error(`Error creating role ${roleData.name}:`, error);
@@ -243,6 +243,12 @@ async function main() {
 
   const testUsers = [
     {
+      email: "admin@admin.com",
+      name: "super admin",
+      password: "admin123",
+      isSuperAdmin:true,
+    },
+    {
       email: "owner@promowaves.com",
       name: "John Owner",
       password: "OwnerPass123!",
@@ -281,6 +287,7 @@ async function main() {
         where: { email: userData.email },
         update: {},
         create: {
+          isSuperAdmin:userData.isSuperAdmin ?? false,
           email: userData.email,
           name: userData.name,
           hashedPassword,

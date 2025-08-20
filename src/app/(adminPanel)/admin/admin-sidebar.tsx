@@ -42,6 +42,7 @@ import {
 } from "@/components/ui/tooltip"
 import { useTheme } from "next-themes"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import type { User } from "@prisma/client"
 
 const navigation = [
   { 
@@ -76,18 +77,11 @@ const navigation = [
   },
 ]
 
-export default function AdminSidebar() {
+export default function AdminSidebar({user}:{user:User}) {
   const router = useRouter()
   const pathname = usePathname()
   const { theme, setTheme } = useTheme()
   
-  // Get current page title
-  const getPageTitle = () => {
-    if (pathname === "/admin") return "Dashboard"
-    const item = navigation.find(nav => nav.href === pathname)
-    return item?.name || "Dashboard"
-  }
-
   return (
     <TooltipProvider delayDuration={0}>
       <Sidebar collapsible="icon">
@@ -144,11 +138,11 @@ export default function AdminSidebar() {
                   <SidebarMenuButton size="lg">
                     <Avatar className="h-8 w-8">
                       <AvatarImage src="/placeholder-avatar.jpg" alt="Admin" />
-                      <AvatarFallback>AD</AvatarFallback>
+                      <AvatarFallback>{user.name?.slice(0,2)?.toUpperCase()}</AvatarFallback>
                     </Avatar>
                     <div className="flex flex-col gap-0.5 leading-none">
-                      <span className="font-semibold">Admin User</span>
-                      <span className="text-xs text-muted-foreground">admin@example.com</span>
+                      <span className="font-semibold">{user.name}</span>
+                      <span className="text-xs text-muted-foreground">{user.email}</span>
                     </div>
                     <ChevronUp className="ml-auto h-4 w-4" />
                   </SidebarMenuButton>
@@ -161,19 +155,6 @@ export default function AdminSidebar() {
                   <DropdownMenuItem onClick={() => router.push("/admin/profile")}>
                     <User2 className="mr-2 h-4 w-4" />
                     Profile
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
-                    {theme === "dark" ? (
-                      <>
-                        <Sun className="mr-2 h-4 w-4" />
-                        Light Mode
-                      </>
-                    ) : (
-                      <>
-                        <Moon className="mr-2 h-4 w-4" />
-                        Dark Mode
-                      </>
-                    )}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => router.push("/admin/settings")}>
                     <Settings className="mr-2 h-4 w-4" />

@@ -109,7 +109,7 @@ model User {
     hashedPassword String?   @map("hashed_password")
     createdAt      DateTime  @default(now()) @map("created_at")
     updatedAt      DateTime  @updatedAt @map("updated_at")
-    
+    isSuperAdmin   Boolean   @default(false)
     // Relations
     accounts        Account[]
     sessions        Session[]

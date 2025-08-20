@@ -10,6 +10,31 @@ export const getServerAuthSession = () => {
   return auth();
 };
 
+
+export const getUserServerSide = async () => {
+  const session = await getServerAuthSession();
+  if (!session || !session.user?.id) {
+    return null;
+  }
+  const user = await db.user.findUnique({
+    where: {
+      id: session.user.id,
+    },
+    include:{
+      workspaces:{
+        include:{
+          role:{
+            include:{
+              permissions:true
+            }
+          }
+        }
+      }
+    }
+  });
+  return user;
+};
+
 /**
  * Get user with full profile data
  */

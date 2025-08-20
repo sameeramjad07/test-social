@@ -14,8 +14,6 @@ const navigation = [
 
 export default function AdminHeader() {
   const pathname = usePathname()
-  
-  // Get current page title
   const getPageTitle = () => {
     if (pathname === "/admin") return "Dashboard"
     const item = navigation.find(nav => nav.href === pathname)
