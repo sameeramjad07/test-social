@@ -47,6 +47,7 @@ import {
   Twitter,
   Facebook,
   Linkedin,
+  Sparkles,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
@@ -87,11 +88,8 @@ export default function ScheduleEditorPage() {
   const scheduleId = params.scheduleId as string;
   const workspaceId = params.workspaceId as string;
 
-  const { data: schedule, isLoading } = api.posts.getSchedule.useQuery(
-    {
-      scheduleId,
-      workspaceId,
-    },
+  const { data: schedule, isLoading } = api.schedules.getSchedule.useQuery(
+    { scheduleId, workspaceId },
     { enabled: !!scheduleId && !!workspaceId }
   );
 
@@ -104,12 +102,18 @@ export default function ScheduleEditorPage() {
     onError: (error) => toast.error(error.message),
   });
 
-  const generateSchedulePosts = api.posts.generateSchedulePosts.useMutation({
-    onSuccess: () => toast.success("Posts generated successfully"),
+  const generateBulkPosts = api.posts.generateBulkPosts.useMutation({
+    onSuccess: () => toast.success("All posts generated successfully"),
     onError: (error) => toast.error(error.message),
   });
 
-  const activateSchedule = api.posts.activateSchedule.useMutation({
+  const { data: progress, refetch: refetchProgress } =
+    api.posts.getGenerationProgress.useQuery(
+      { scheduleId },
+      { enabled: !!scheduleId, refetchInterval: 5000 }
+    );
+
+  const activateSchedule = api.schedules.activateSchedule.useMutation({
     onSuccess: () => toast.success("Schedule activated"),
     onError: (error) => toast.error(error.message),
   });
@@ -129,6 +133,8 @@ export default function ScheduleEditorPage() {
     }
   );
 
+  const [bulkPrompt, setBulkPrompt] = useState("");
+
   useEffect(() => {
     if (schedule) {
       setValue("name", schedule.name);
@@ -147,6 +153,7 @@ export default function ScheduleEditorPage() {
       setValue("contentPrompt", schedule.contentPrompt || "");
       setValue("imagePrompt", schedule.imagePrompt || "");
       setValue("hashtags", schedule.hashtags);
+      setBulkPrompt(schedule.contentPrompt || "");
     }
   }, [schedule, setValue]);
 
@@ -159,15 +166,15 @@ export default function ScheduleEditorPage() {
     });
   };
 
-  const handleGeneratePosts = () => {
-    generateSchedulePosts.mutate({ scheduleId, workspaceId });
+  const handleGenerateBulkPosts = () => {
+    generateBulkPosts.mutate({ scheduleId, workspaceId, prompt: bulkPrompt });
   };
 
   const handleActivate = () => {
     activateSchedule.mutate({ scheduleId, workspaceId });
   };
 
-  // Calculate dates for post generation check
+  // Calculate dates for post generation
   const dates = schedule
     ? (() => {
         const result = [];
@@ -175,12 +182,10 @@ export default function ScheduleEditorPage() {
         const end = schedule.endDate
           ? new Date(schedule.endDate)
           : new Date(current.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days default
-
         while (current <= end) {
           let include = false;
           const dayOfWeek = current.getDay();
           const dayOfMonth = current.getDate();
-
           switch (schedule.frequency) {
             case "DAILY":
               include = true;
@@ -204,7 +209,6 @@ export default function ScheduleEditorPage() {
               }
               break;
           }
-
           if (include) {
             result.push(new Date(current));
           }
@@ -214,15 +218,16 @@ export default function ScheduleEditorPage() {
       })()
     : [];
 
+  const totalPosts = schedule
+    ? schedule.postsPerSlot * schedule.timeSlots.length * dates.length
+    : 0;
+
   const allPostsApproved = schedule?.posts.every(
     (post) => post.status === PostStatus.APPROVED
   );
 
-  const completionPercentage = schedule
-    ? (schedule.posts.filter((post) => post.status === PostStatus.APPROVED)
-        .length /
-        schedule.posts.length) *
-      100
+  const completionPercentage = progress
+    ? (progress.completed / progress.total) * 100
     : 0;
 
   if (isLoading) {
@@ -300,13 +305,6 @@ export default function ScheduleEditorPage() {
                 </Button>
               )}
             </div>
-          </div>
-          <div className="mt-4">
-            <div className="flex justify-between text-sm mb-2">
-              <span>Completion Progress</span>
-              <span>{Math.round(completionPercentage)}%</span>
-            </div>
-            <Progress value={completionPercentage} className="h-2" />
           </div>
         </motion.div>
 
@@ -475,64 +473,139 @@ export default function ScheduleEditorPage() {
               <CardHeader>
                 <CardTitle>Posts</CardTitle>
                 <CardDescription>
-                  Manage individual posts for this schedule
+                  Generate and manage all posts for this schedule
                 </CardDescription>
-                {schedule.posts.length <
-                  schedule.postsPerSlot *
-                    schedule.timeSlots.length *
-                    dates.length && (
-                  <Button
-                    onClick={handleGeneratePosts}
-                    disabled={generateSchedulePosts.isPending}
-                  >
-                    {generateSchedulePosts.isPending
-                      ? "Generating..."
-                      : "Generate Posts"}
-                  </Button>
-                )}
               </CardHeader>
-              <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Scheduled Date</TableHead>
-                      <TableHead>Platforms</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Action</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {schedule.posts.map((post) => (
-                      <TableRow key={post.id}>
-                        <TableCell>
-                          {post.scheduledAt
-                            ? format(post.scheduledAt, "PPP HH:mm")
-                            : "Not scheduled"}
-                        </TableCell>
-                        <TableCell>
-                          {post.socialAccounts
-                            .map((acc) => acc.platform)
-                            .join(", ")}
-                        </TableCell>
-                        <TableCell>
-                          <Badge>{post.status}</Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Button
-                            variant="outline"
-                            onClick={() =>
-                              router.push(
-                                `/workspace/${workspaceId}/schedule/${scheduleId}/post/${post.id}`
-                              )
-                            }
-                          >
-                            Edit
-                          </Button>
-                        </TableCell>
+              <CardContent className="space-y-6">
+                {schedule.posts.length === 0 && (
+                  <div className="space-y-4">
+                    <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-lg">
+                      <p className="text-sm text-slate-600 dark:text-slate-400">
+                        Based on your schedule configuration, {totalPosts} posts
+                        will be generated for the following:
+                      </p>
+                      <ul className="list-disc list-inside text-sm text-slate-600 dark:text-slate-400 mt-2">
+                        <li>
+                          <strong>Platforms:</strong>{" "}
+                          {schedule.platforms.join(", ")}
+                        </li>
+                        <li>
+                          <strong>Dates:</strong>{" "}
+                          {dates.map((d) => format(d, "PPP")).join(", ")}
+                        </li>
+                        <li>
+                          <strong>Time Slots:</strong>{" "}
+                          {schedule.timeSlots.join(", ")}
+                        </li>
+                        <li>
+                          <strong>Posts per Slot:</strong>{" "}
+                          {schedule.postsPerSlot}
+                        </li>
+                      </ul>
+                      <p className="text-sm text-slate-600 dark:text-slate-400 mt-2">
+                        Provide a detailed prompt below to generate content,
+                        images, and hashtags for all posts.
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="bulk-prompt">Content Prompt</Label>
+                      <Textarea
+                        id="bulk-prompt"
+                        value={bulkPrompt}
+                        onChange={(e) => setBulkPrompt(e.target.value)}
+                        rows={6}
+                        placeholder="Enter a detailed prompt for generating all posts (e.g., 'Create engaging posts about sustainable fashion for young professionals, including vibrant images and relevant hashtags')"
+                      />
+                    </div>
+                    <Button
+                      onClick={handleGenerateBulkPosts}
+                      disabled={generateBulkPosts.isPending}
+                      className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
+                    >
+                      <Sparkles className="w-4 h-4 mr-2" />
+                      {generateBulkPosts.isPending
+                        ? "Generating Posts..."
+                        : "Generate All Posts"}
+                    </Button>
+                  </div>
+                )}
+                {progress && progress.total > 0 && (
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-sm">
+                      <span>Generation Progress</span>
+                      <span>
+                        {progress.completed}/{progress.total} posts (
+                        {Math.round(completionPercentage)}%)
+                      </span>
+                    </div>
+                    <Progress value={completionPercentage} className="h-2" />
+                  </div>
+                )}
+                {schedule.posts.length > 0 && (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Scheduled Date</TableHead>
+                        <TableHead>Platforms</TableHead>
+                        <TableHead>Content</TableHead>
+                        <TableHead>Image</TableHead>
+                        <TableHead>Hashtags</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Action</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {schedule.posts.map((post) => (
+                        <TableRow key={post.id}>
+                          <TableCell>
+                            {post.scheduledAt
+                              ? format(post.scheduledAt, "PPP HH:mm")
+                              : "Not scheduled"}
+                          </TableCell>
+                          <TableCell>
+                            {post.socialAccounts
+                              .map((acc) => acc.platform)
+                              .join(", ")}
+                          </TableCell>
+                          <TableCell className="max-w-xs truncate">
+                            {post.content || "No content"}
+                          </TableCell>
+                          <TableCell>
+                            {post.images[0]?.url ? (
+                              <img
+                                src={post.images[0].url}
+                                alt="Post image"
+                                className="w-16 h-16 object-cover rounded"
+                              />
+                            ) : (
+                              "No image"
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {post.hashtags.map((tag) => `#${tag}`).join(", ")}
+                          </TableCell>
+                          <TableCell>
+                            <Badge>{post.status}</Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Button
+                              variant="outline"
+                              onClick={() =>
+                                router.push(
+                                  `/workspace/${workspaceId}/schedule/${scheduleId}/post/${post.id}`
+                                )
+                              }
+                              disabled={post.status === PostStatus.APPROVED}
+                            >
+                              <Edit className="w-4 h-4 mr-2" />
+                              Edit
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
               </CardContent>
             </Card>
           </TabsContent>

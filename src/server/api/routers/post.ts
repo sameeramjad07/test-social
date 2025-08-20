@@ -7,7 +7,7 @@ import {
   InstagramWrapper,
   LinkedInWrapper,
 } from "@/lib/social-media";
-import { OpenAI } from "openai";
+import OpenAI from "openai";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -52,6 +52,8 @@ const updatePostSchema = z.object({
   postId: z.string(),
   workspaceId: z.string(),
   content: z.string().optional(),
+  imageUrl: z.string().url().optional(),
+  hashtags: z.array(z.string()).optional(),
 });
 
 export const postsRouter = createTRPCRouter({
@@ -421,7 +423,350 @@ export const postsRouter = createTRPCRouter({
   update: protectedProcedure
     .input(updatePostSchema)
     .mutation(async ({ ctx, input }) => {
-      const { postId, workspaceId, content } = input;
+      const { postId, workspaceId, content, imageUrl, hashtags } = input;
+
+      const post = await ctx.db.post.findUnique({
+        where: { id: postId },
+        include: {
+          workspace: {
+            include: {
+              members: {
+                where: { userId: ctx.session.user.id },
+                include: {
+                  role: {
+                    include: {
+                      permissions: {
+                        include: { permission: true },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          images: true,
+        },
+      });
+
+      if (!post) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Post not found",
+        });
+      }
+
+      const member = post.workspace.members[0];
+      if (!member) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You are not a member of this workspace",
+        });
+      }
+
+      const hasPermission =
+        member.role.name === "owner" ||
+        member.role.permissions.some(
+          (rp) =>
+            rp.permission.resource === "posts" &&
+            rp.permission.action === "update"
+        );
+
+      if (!hasPermission) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You don't have permission to update posts",
+        });
+      }
+
+      if (post.status === PostStatus.APPROVED) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Cannot update approved posts",
+        });
+      }
+
+      const updatedPost = await ctx.db.post.update({
+        where: { id: postId },
+        data: {
+          content: content || post.content,
+          hashtags: hashtags || post.hashtags,
+          status: PostStatus.DRAFT,
+          images: imageUrl
+            ? {
+                upsert: {
+                  where: { id: post.images[0]?.id || "dummy-id" },
+                  create: {
+                    url: imageUrl,
+                    order: 0,
+                    isApproved: false,
+                  },
+                  update: {
+                    url: imageUrl,
+                    isApproved: false,
+                  },
+                },
+              }
+            : undefined,
+        },
+      });
+
+      return { success: true, post: updatedPost };
+    }),
+
+  generateBulkPosts: protectedProcedure
+    .input(
+      z.object({
+        scheduleId: z.string(),
+        workspaceId: z.string(),
+        prompt: z.string().min(1),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { scheduleId, workspaceId, prompt } = input;
+
+      if (!ctx.session.user.id) {
+        throw new TRPCError({
+          code: "UNAUTHORIZED",
+          message: "User session not found",
+        });
+      }
+
+      const member = await ctx.db.workspaceMember.findFirst({
+        where: {
+          workspaceId,
+          userId: ctx.session.user.id,
+        },
+        include: {
+          role: {
+            include: {
+              permissions: {
+                include: { permission: true },
+              },
+            },
+          },
+        },
+      });
+
+      if (!member) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Not a member of this workspace",
+        });
+      }
+
+      const hasPermission =
+        member.role.name === "owner" ||
+        member.role.permissions.some(
+          (rp) =>
+            rp.permission.resource === "posts" &&
+            rp.permission.action === "create"
+        );
+
+      if (!hasPermission) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You don't have permission to create posts",
+        });
+      }
+
+      const schedule = await ctx.db.postSchedule.findUnique({
+        where: { id: scheduleId },
+        include: { posts: true },
+      });
+
+      if (!schedule || schedule.workspaceId !== workspaceId) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Schedule not found",
+        });
+      }
+
+      if (schedule.isActive) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Cannot generate posts for active schedule",
+        });
+      }
+
+      if (schedule.posts.length > 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Posts already generated for this schedule",
+        });
+      }
+
+      const socialAccounts = await ctx.db.socialAccount.findMany({
+        where: {
+          workspaceId,
+          platform: { in: schedule.platforms },
+          isActive: true,
+        },
+        select: { id: true },
+      });
+
+      const dates = [];
+      let current = new Date(schedule.startDate);
+      const end = schedule.endDate
+        ? new Date(schedule.endDate)
+        : new Date(current.getTime() + 30 * 24 * 60 * 60 * 1000);
+      while (current <= end) {
+        let include = false;
+        const dayOfWeek = current.getDay();
+        const dayOfMonth = current.getDate();
+        switch (schedule.frequency) {
+          case "DAILY":
+            include = true;
+            break;
+          case "WEEKLY":
+            if (schedule.weekDays.includes(dayOfWeek)) {
+              include = true;
+            }
+            break;
+          case "MONTHLY":
+            if (schedule.monthDays.includes(dayOfMonth)) {
+              include = true;
+            }
+            break;
+          case "CUSTOM":
+            if (
+              schedule.weekDays.includes(dayOfWeek) ||
+              schedule.monthDays.includes(dayOfMonth)
+            ) {
+              include = true;
+            }
+            break;
+        }
+        if (include) {
+          dates.push(new Date(current));
+        }
+        current.setDate(current.getDate() + 1);
+      }
+
+      const totalPosts =
+        schedule.postsPerSlot * schedule.timeSlots.length * dates.length;
+
+      await ctx.db.postGenerationProgress.create({
+        data: {
+          scheduleId,
+          total: totalPosts,
+          completed: 0,
+        },
+      });
+
+      const posts = [];
+      for (const date of dates) {
+        for (const timeSlot of schedule.timeSlots) {
+          const [hh, mm] = timeSlot.split(":").map(Number);
+          if (hh === undefined || mm === undefined || isNaN(hh) || isNaN(mm)) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: `Invalid time slot format: ${timeSlot}`,
+            });
+          }
+          for (let i = 0; i < schedule.postsPerSlot; i++) {
+            const scheduledAt = new Date(date);
+            scheduledAt.setHours(hh, mm, 0, 0);
+
+            const completion = await openai.chat.completions.create({
+              model: "gpt-4o-mini",
+              messages: [
+                {
+                  role: "system",
+                  content:
+                    "You are an expert social media content creator. Generate engaging content, hashtags, and an image prompt for a social media post based on the provided prompt. Return JSON with fields: content (string), hashtags (array of strings), imagePrompt (string).",
+                },
+                { role: "user", content: prompt },
+              ],
+            });
+
+            const result = completion.choices[0]?.message?.content;
+            if (!result) {
+              throw new TRPCError({
+                code: "INTERNAL_SERVER_ERROR",
+                message: "AI did not return content",
+              });
+            }
+
+            const { content, hashtags, imagePrompt } = JSON.parse(result);
+
+            const imageResponse = await openai.images.generate({
+              model: "dall-e-3",
+              prompt: imagePrompt,
+              n: 1,
+              size: "1024x1024",
+            });
+
+            const imageUrl = imageResponse.data[0]?.url;
+            if (!imageUrl) {
+              throw new TRPCError({
+                code: "INTERNAL_SERVER_ERROR",
+                message: "Failed to generate image",
+              });
+            }
+
+            const post = await ctx.db.post.create({
+              data: {
+                workspaceId,
+                createdById: ctx.session.user.id,
+                content,
+                hashtags,
+                status: PostStatus.DRAFT,
+                scheduledAt,
+                aiPrompt: prompt,
+                aiModel: "gpt-4o-mini",
+                scheduleId,
+                socialAccounts: {
+                  connect: socialAccounts.map(({ id }) => ({ id })),
+                },
+                images: {
+                  create: {
+                    url: imageUrl,
+                    aiPrompt: imagePrompt,
+                    order: 0,
+                    isApproved: false,
+                  },
+                },
+              },
+            });
+
+            posts.push(post);
+
+            await ctx.db.postGenerationProgress.update({
+              where: { scheduleId },
+              data: { completed: { increment: 1 } },
+            });
+          }
+        }
+      }
+
+      await ctx.db.postSchedule.update({
+        where: { id: scheduleId },
+        data: { lastGeneratedAt: new Date() },
+      });
+
+      return { success: true, posts };
+    }),
+
+  getGenerationProgress: protectedProcedure
+    .input(z.object({ scheduleId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const progress = await ctx.db.postGenerationProgress.findUnique({
+        where: { scheduleId: input.scheduleId },
+      });
+      return (
+        progress || { scheduleId: input.scheduleId, total: 0, completed: 0 }
+      );
+    }),
+
+  approvePost: protectedProcedure
+    .input(
+      z.object({
+        postId: z.string(),
+        approve: z.boolean().optional().default(true),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { postId, approve } = input;
 
       const post = await ctx.db.post.findUnique({
         where: { id: postId },
@@ -465,107 +810,40 @@ export const postsRouter = createTRPCRouter({
         member.role.permissions.some(
           (rp) =>
             rp.permission.resource === "posts" &&
-            rp.permission.action === "update"
+            rp.permission.action === "approve"
         );
 
       if (!hasPermission) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message: "You don't have permission to update posts",
+          message: "You don't have permission to approve posts",
         });
       }
 
-      if (
-        post.status !== PostStatus.DRAFT &&
-        post.status !== PostStatus.CONTENT_PENDING_APPROVAL
-      ) {
+      if (approve && post.status !== PostStatus.DRAFT) {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: "Can only update content for draft or content pending posts",
+          message: "Post can only be approved from draft status",
         });
       }
 
-      const updatedPost = await ctx.db.post.update({
+      if (!approve && post.status !== PostStatus.APPROVED) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Post can only be unapproved from approved status",
+        });
+      }
+
+      await ctx.db.post.update({
         where: { id: postId },
         data: {
-          content: content || post.content,
-          status:
-            content && post.status === PostStatus.DRAFT
-              ? PostStatus.CONTENT_PENDING_APPROVAL
-              : post.status,
+          status: approve ? PostStatus.APPROVED : PostStatus.DRAFT,
+          contentApproved: approve,
+          imagesApproved: approve,
         },
       });
 
-      return { success: true, post: updatedPost };
-    }),
-
-  getSchedule: protectedProcedure
-    .input(z.object({ scheduleId: z.string(), workspaceId: z.string() }))
-    .query(async ({ ctx, input }) => {
-      const { scheduleId, workspaceId } = input;
-
-      const member = await ctx.db.workspaceMember.findFirst({
-        where: {
-          workspaceId,
-          userId: ctx.session.user.id,
-        },
-        include: {
-          role: {
-            include: {
-              permissions: {
-                include: { permission: true },
-              },
-            },
-          },
-        },
-      });
-
-      if (!member) {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "Not a member of this workspace",
-        });
-      }
-
-      const hasPermission =
-        member.role.name === "owner" ||
-        member.role.permissions.some(
-          (rp) =>
-            rp.permission.resource === "schedules" &&
-            rp.permission.action === "read"
-        );
-
-      if (!hasPermission) {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "You don't have permission to view schedules",
-        });
-      }
-
-      const schedule = await ctx.db.postSchedule.findUnique({
-        where: { id: scheduleId },
-        include: {
-          posts: {
-            orderBy: { scheduledAt: "asc" },
-            include: {
-              socialAccounts: {
-                select: {
-                  platform: true,
-                },
-              },
-            },
-          },
-        },
-      });
-
-      if (!schedule || schedule.workspaceId !== workspaceId) {
-        throw new TRPCError({
-          code: "NOT_FOUND",
-          message: "Schedule not found",
-        });
-      }
-
-      return schedule;
+      return { success: true };
     }),
 
   // New: Generate posts for schedule
@@ -573,6 +851,14 @@ export const postsRouter = createTRPCRouter({
     .input(z.object({ scheduleId: z.string(), workspaceId: z.string() }))
     .mutation(async ({ ctx, input }) => {
       const { scheduleId, workspaceId } = input;
+
+      // Validate user session
+      if (!ctx.session.user.id) {
+        throw new TRPCError({
+          code: "UNAUTHORIZED",
+          message: "User session not found",
+        });
+      }
 
       const member = await ctx.db.workspaceMember.findFirst({
         where: {
@@ -685,6 +971,12 @@ export const postsRouter = createTRPCRouter({
       for (const date of dates) {
         for (const timeSlot of schedule.timeSlots) {
           const [hh, mm] = timeSlot.split(":").map(Number);
+          if (hh === undefined || mm === undefined || isNaN(hh) || isNaN(mm)) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: `Invalid time slot format: ${timeSlot}`,
+            });
+          }
           const scheduledAt = new Date(date);
           scheduledAt.setHours(hh, mm, 0, 0);
 
@@ -797,7 +1089,16 @@ export const postsRouter = createTRPCRouter({
         ],
       });
 
-      const generatedContent = completion.choices[0].message.content || "";
+      const firstChoice = completion.choices[0];
+
+      if (!firstChoice?.message?.content) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "AI did not return any content",
+        });
+      }
+
+      const generatedContent = firstChoice.message.content;
 
       await ctx.db.post.update({
         where: { id: postId },
@@ -978,17 +1279,24 @@ export const postsRouter = createTRPCRouter({
         size: "1024x1024",
       });
 
+      if (!response.data || !response.data[0]) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Failed to generate image: No data returned",
+        });
+      }
+
       const imageUrl = response.data[0].url;
 
       if (!imageUrl) {
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
-          message: "Failed to generate image",
+          message: "Failed to generate image: No URL returned",
         });
       }
 
-      // Create or update PostImage (assuming one image per post for simplicity)
-      if (post.images.length > 0) {
+      // Create or update PostImage
+      if (post.images.length > 0 && post.images[0]?.id) {
         await ctx.db.postImage.update({
           where: { id: post.images[0].id },
           data: {
@@ -1244,80 +1552,5 @@ export const postsRouter = createTRPCRouter({
       }
 
       return post;
-    }),
-
-  // New: Activate schedule
-  activateSchedule: protectedProcedure
-    .input(z.object({ scheduleId: z.string(), workspaceId: z.string() }))
-    .mutation(async ({ ctx, input }) => {
-      const { scheduleId, workspaceId } = input;
-
-      const member = await ctx.db.workspaceMember.findFirst({
-        where: {
-          workspaceId,
-          userId: ctx.session.user.id,
-        },
-        include: {
-          role: {
-            include: {
-              permissions: {
-                include: { permission: true },
-              },
-            },
-          },
-        },
-      });
-
-      if (!member) {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "You are not a member of this workspace",
-        });
-      }
-
-      const hasPermission =
-        member.role.name === "owner" ||
-        member.role.permissions.some(
-          (rp) =>
-            rp.permission.resource === "schedules" &&
-            rp.permission.action === "update"
-        );
-
-      if (!hasPermission) {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "You don't have permission to update schedules",
-        });
-      }
-
-      const schedule = await ctx.db.postSchedule.findUnique({
-        where: { id: scheduleId },
-        include: { posts: true },
-      });
-
-      if (!schedule || schedule.workspaceId !== workspaceId) {
-        throw new TRPCError({
-          code: "NOT_FOUND",
-          message: "Schedule not found",
-        });
-      }
-
-      const allApproved = schedule.posts.every(
-        (post) => post.status === PostStatus.APPROVED
-      );
-
-      if (!allApproved) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "All posts must be approved before activating the schedule",
-        });
-      }
-
-      await ctx.db.postSchedule.update({
-        where: { id: scheduleId },
-        data: { isActive: true },
-      });
-
-      return { success: true };
     }),
 });

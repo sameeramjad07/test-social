@@ -271,6 +271,41 @@ model PostPublication {
     @@map("post_publications")
 }
 
+model PostGenerationProgress {
+  id         String   @id @default(uuid())
+  scheduleId String   @unique
+  total      Int
+  completed  Int
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  schedule   PostSchedule @relation("ScheduleProgress", fields: [scheduleId], references: [id])
+}
+
+model PostGenerationJob {
+  id              String       @id @default(uuid())
+  scheduleId      String
+  workspaceId     String
+  prompt          String
+  scheduledAt     DateTime
+  socialAccountIds String[]     // Stored as JSON array
+  userId          String
+  status          JobStatus    @default(PENDING)
+  retries         Int          @default(0)
+  errorMessage    String?      @db.Text
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  schedule         PostSchedule @relation("ScheduleJobs", fields: [scheduleId], references: [id])
+
+  @@index([scheduleId, status])
+}
+
+enum JobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
 // ========== SCHEDULING ==========
 
 model PostSchedule {
@@ -306,6 +341,9 @@ model PostSchedule {
     // Relations
     workspace         Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
     posts             Post[]
+
+    progress          PostGenerationProgress?  @relation("ScheduleProgress")
+    jobs              PostGenerationJob[]      @relation("ScheduleJobs")
     
     @@index([workspaceId, isActive])
     @@map("post_schedules")

@@ -10,17 +10,17 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Sparkles, Plus, Play, FileText } from "lucide-react";
+import { Loader2, FileText, Play, Plus, Sparkles } from "lucide-react";
 import { ScheduleCard } from "./schedule-card";
-import { motion } from "framer-motion";
 import { toast } from "sonner";
+import { Platform } from "@prisma/client";
 
 interface Schedule {
   id: string;
   name: string;
-  platforms: string[];
+  platforms: Platform[];
   duration: number | null;
-  durationType: "days" | "weeks" | "months";
+  durationType: "days";
   frequency: string;
   isActive: boolean;
   createdAt: Date;
@@ -40,9 +40,13 @@ export function AIContentAssistant({
   onCreateSchedule,
   onEditSchedule,
 }: AIContentAssistantProps) {
-  const { data: schedules, refetch } = api.schedules.list.useQuery(
+  const {
+    data: schedules,
+    isLoading,
+    refetch,
+  } = api.schedules.list.useQuery(
     { workspaceId },
-    { enabled: !!workspaceId }
+    { enabled: !!workspaceId, initialData: [] }
   );
 
   const updateMutation = api.schedules.update.useMutation({
@@ -61,21 +65,13 @@ export function AIContentAssistant({
     onError: (error) => toast.error(error.message),
   });
 
-  const draftSchedules: Schedule[] =
-    schedules
-      ?.filter((s) => !s.isActive)
-      .map((s) => ({
-        ...s,
-        durationType: s.durationType as "days" | "weeks" | "months",
-      })) || [];
-
-  const activeSchedules: Schedule[] =
-    schedules
-      ?.filter((s) => s.isActive)
-      .map((s) => ({
-        ...s,
-        durationType: s.durationType as "days" | "weeks" | "months",
-      })) || [];
+  // Type assertion to ensure schedules match the Schedule interface
+  const draftSchedules: Schedule[] = (schedules as Schedule[]).filter(
+    (s) => !s.isActive
+  );
+  const activeSchedules: Schedule[] = (schedules as Schedule[]).filter(
+    (s) => s.isActive
+  );
 
   const ScheduleSection = ({
     title,
@@ -102,7 +98,12 @@ export function AIContentAssistant({
           </Badge>
         </div>
       </div>
-      {schedules.length === 0 ? (
+      {isLoading ? (
+        <div className="text-center py-8">
+          <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-blue-600" />
+          <p className="text-slate-500">Loading schedules...</p>
+        </div>
+      ) : schedules.length === 0 ? (
         <div className="text-center py-8 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-lg">
           <Icon className="w-12 h-12 text-slate-300 mx-auto mb-4" />
           <p className="text-slate-500 mb-4">{emptyMessage}</p>
@@ -139,49 +140,42 @@ export function AIContentAssistant({
   );
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5, delay: 0.2 }}
-      className="space-y-8"
-    >
-      <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm dark:bg-slate-900/80">
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-purple-600" />
-                AI Content Assistant
-              </CardTitle>
-              <CardDescription>
-                Manage your AI-powered content schedules
-              </CardDescription>
-            </div>
-            <Button
-              onClick={onCreateSchedule}
-              className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
-            >
-              <Plus className="w-4 h-4 mr-2" />
-              New Schedule
-            </Button>
+    <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm dark:bg-slate-900/80">
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-purple-600" />
+              AI Content Assistant
+            </CardTitle>
+            <CardDescription>
+              Manage your AI-powered content schedules
+            </CardDescription>
           </div>
-        </CardHeader>
-        <CardContent className="space-y-8">
-          <ScheduleSection
-            title="Draft Schedules"
-            schedules={draftSchedules}
-            icon={FileText}
-            emptyMessage="No draft schedules yet"
-            emptyAction={onCreateSchedule}
-          />
-          <ScheduleSection
-            title="Active Schedules"
-            schedules={activeSchedules}
-            icon={Play}
-            emptyMessage="No active schedules running"
-          />
-        </CardContent>
-      </Card>
-    </motion.div>
+          <Button
+            onClick={onCreateSchedule}
+            className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            New Schedule
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-8">
+        <ScheduleSection
+          title="Draft Schedules"
+          schedules={draftSchedules}
+          icon={FileText}
+          emptyMessage="No draft schedules yet"
+          emptyAction={onCreateSchedule}
+        />
+        <ScheduleSection
+          title="Active Schedules"
+          schedules={activeSchedules}
+          icon={Play}
+          emptyMessage="No active schedules running"
+        />
+      </CardContent>
+    </Card>
   );
 }

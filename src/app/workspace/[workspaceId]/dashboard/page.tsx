@@ -4,6 +4,7 @@ import { useSession } from "next-auth/react";
 import { useRouter, useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { api } from "@/trpc/react";
+import type { PostSchedule } from "@prisma/client";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -30,6 +31,11 @@ export default function WorkspaceDashboardPage() {
   const [isRedirecting, setIsRedirecting] = useState(false);
   const [isCreateScheduleOpen, setIsCreateScheduleOpen] = useState(false);
 
+  // Debug workspaceId availability
+  useEffect(() => {
+    console.log("Workspace ID:", workspaceId);
+  }, [workspaceId]);
+
   // Fetch workspace data
   const { data: workspace } = api.workspaces.getUserWorkspaces.useQuery(
     undefined,
@@ -45,10 +51,26 @@ export default function WorkspaceDashboardPage() {
   );
 
   // Fetch schedules
-  const { data: schedules } = api.schedules.list.useQuery(
+  const {
+    data: schedules = [],
+    isLoading: isSchedulesLoading,
+    isFetching: isSchedulesFetching,
+    refetch,
+  } = api.schedules.list.useQuery(
     { workspaceId },
-    { enabled: !!workspaceId, initialData: [] }
+    {
+      initialData: [],
+      staleTime: 0,
+      refetchOnMount: "always",
+    }
   );
+
+  // Debug schedules fetch
+  useEffect(() => {
+    if (schedules) {
+      console.log("Schedules fetched:", schedules);
+    }
+  }, [schedules]);
 
   // Fetch stats
   const { data: userStats } = api.auth.getUserStats.useQuery(undefined, {

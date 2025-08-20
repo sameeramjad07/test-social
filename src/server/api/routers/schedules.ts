@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Platform, ScheduleFrequency } from "@prisma/client";
+import { Platform, ScheduleFrequency, PostStatus } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
 
@@ -153,6 +153,74 @@ export const schedulesRouter = createTRPCRouter({
       }));
     }),
 
+  getSchedule: protectedProcedure
+    .input(z.object({ scheduleId: z.string(), workspaceId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const { scheduleId, workspaceId } = input;
+
+      const member = await ctx.db.workspaceMember.findFirst({
+        where: {
+          workspaceId,
+          userId: ctx.session.user.id,
+        },
+        include: {
+          role: {
+            include: {
+              permissions: {
+                include: { permission: true },
+              },
+            },
+          },
+        },
+      });
+
+      if (!member) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Not a member of this workspace",
+        });
+      }
+
+      const hasPermission =
+        member.role.name === "owner" ||
+        member.role.permissions.some(
+          (rp) =>
+            rp.permission.resource === "schedules" &&
+            rp.permission.action === "read"
+        );
+
+      if (!hasPermission) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You don't have permission to view schedules",
+        });
+      }
+
+      const schedule = await ctx.db.postSchedule.findUnique({
+        where: { id: scheduleId },
+        include: {
+          posts: {
+            orderBy: { scheduledAt: "asc" },
+            include: {
+              socialAccounts: {
+                select: {
+                  platform: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (!schedule || schedule.workspaceId !== workspaceId) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Schedule not found",
+        });
+      }
+
+      return schedule;
+    }),
   // Create a new schedule
   create: protectedProcedure
     .input(createScheduleSchema)
@@ -337,6 +405,80 @@ export const schedulesRouter = createTRPCRouter({
 
       await ctx.db.postSchedule.delete({
         where: { id: scheduleId },
+      });
+
+      return { success: true };
+    }),
+
+  activateSchedule: protectedProcedure
+    .input(z.object({ scheduleId: z.string(), workspaceId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const { scheduleId, workspaceId } = input;
+
+      const member = await ctx.db.workspaceMember.findFirst({
+        where: {
+          workspaceId,
+          userId: ctx.session.user.id,
+        },
+        include: {
+          role: {
+            include: {
+              permissions: {
+                include: { permission: true },
+              },
+            },
+          },
+        },
+      });
+
+      if (!member) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You are not a member of this workspace",
+        });
+      }
+
+      const hasPermission =
+        member.role.name === "owner" ||
+        member.role.permissions.some(
+          (rp) =>
+            rp.permission.resource === "schedules" &&
+            rp.permission.action === "update"
+        );
+
+      if (!hasPermission) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You don't have permission to update schedules",
+        });
+      }
+
+      const schedule = await ctx.db.postSchedule.findUnique({
+        where: { id: scheduleId },
+        include: { posts: true },
+      });
+
+      if (!schedule || schedule.workspaceId !== workspaceId) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Schedule not found",
+        });
+      }
+
+      const allApproved = schedule.posts.every(
+        (post) => post.status === PostStatus.APPROVED
+      );
+
+      if (!allApproved) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "All posts must be approved before activating the schedule",
+        });
+      }
+
+      await ctx.db.postSchedule.update({
+        where: { id: scheduleId },
+        data: { isActive: true },
       });
 
       return { success: true };
