@@ -1,0 +1,196 @@
+"use client"
+
+import { useRouter, usePathname } from "next/navigation"
+import { 
+  LayoutDashboard, 
+  Building2, 
+  Users, 
+  Brain, 
+  Calendar, 
+  Settings,
+  ChevronUp,
+  User2,
+  Moon,
+  Sun,
+  LogOut
+} from "lucide-react"
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarRail,
+} from "@/components/ui/sidebar"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+import { useTheme } from "next-themes"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+
+const navigation = [
+  { 
+    name: "Dashboard", 
+    href: "/admin", 
+    icon: LayoutDashboard 
+  },
+  { 
+    name: "Workspaces", 
+    href: "/admin/workspaces", 
+    icon: Building2 
+  },
+  { 
+    name: "Users", 
+    href: "/admin/users", 
+    icon: Users 
+  },
+  { 
+    name: "AI Usage Logs", 
+    href: "/admin/ai-logs", 
+    icon: Brain 
+  },
+  { 
+    name: "Posts & Scheduling", 
+    href: "/admin/posts", 
+    icon: Calendar 
+  },
+  { 
+    name: "Settings", 
+    href: "/admin/settings", 
+    icon: Settings 
+  },
+]
+
+export default function AdminSidebar() {
+  const router = useRouter()
+  const pathname = usePathname()
+  const { theme, setTheme } = useTheme()
+  
+  // Get current page title
+  const getPageTitle = () => {
+    if (pathname === "/admin") return "Dashboard"
+    const item = navigation.find(nav => nav.href === pathname)
+    return item?.name || "Dashboard"
+  }
+
+  return (
+    <TooltipProvider delayDuration={0}>
+      <Sidebar collapsible="icon">
+        <SidebarHeader>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton size="lg" asChild>
+                <a href="/admin" className="flex items-center gap-2">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
+                    <Brain className="h-5 w-5 text-primary-foreground" />
+                  </div>
+                  <div className="flex flex-col gap-0.5 leading-none">
+                    <span className="font-semibold">Super Admin</span>
+                    <span className="text-xs text-muted-foreground">Control Panel</span>
+                  </div>
+                </a>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarHeader>
+        
+        <SidebarContent>
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {navigation.map((item) => (
+                  <SidebarMenuItem key={item.name}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <SidebarMenuButton
+                          onClick={() => router.push(item.href)}
+                          isActive={pathname === item.href}
+                        >
+                          <item.icon className="h-4 w-4" />
+                          <span>{item.name}</span>
+                        </SidebarMenuButton>
+                      </TooltipTrigger>
+                      <TooltipContent side="right" className="flex items-center gap-4">
+                        {item.name}
+                      </TooltipContent>
+                    </Tooltip>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </SidebarContent>
+        
+        <SidebarFooter>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <SidebarMenuButton size="lg">
+                    <Avatar className="h-8 w-8">
+                      <AvatarImage src="/placeholder-avatar.jpg" alt="Admin" />
+                      <AvatarFallback>AD</AvatarFallback>
+                    </Avatar>
+                    <div className="flex flex-col gap-0.5 leading-none">
+                      <span className="font-semibold">Admin User</span>
+                      <span className="text-xs text-muted-foreground">admin@example.com</span>
+                    </div>
+                    <ChevronUp className="ml-auto h-4 w-4" />
+                  </SidebarMenuButton>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent 
+                  side="top" 
+                  align="start"
+                  className="w-[--radix-popper-anchor-width]"
+                >
+                  <DropdownMenuItem onClick={() => router.push("/admin/profile")}>
+                    <User2 className="mr-2 h-4 w-4" />
+                    Profile
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+                    {theme === "dark" ? (
+                      <>
+                        <Sun className="mr-2 h-4 w-4" />
+                        Light Mode
+                      </>
+                    ) : (
+                      <>
+                        <Moon className="mr-2 h-4 w-4" />
+                        Dark Mode
+                      </>
+                    )}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => router.push("/admin/settings")}>
+                    <Settings className="mr-2 h-4 w-4" />
+                    Settings
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => router.push("/logout")}>
+                    <LogOut className="mr-2 h-4 w-4" />
+                    Sign out
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarFooter>
+        <SidebarRail />
+      </Sidebar>
+    </TooltipProvider>
+  )
+}
