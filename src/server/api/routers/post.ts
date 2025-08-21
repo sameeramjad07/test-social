@@ -635,6 +635,8 @@ export const postsRouter = createTRPCRouter({
               include = true;
             }
             break;
+          default:
+            include = false;
         }
         if (include) {
           dates.push(new Date(current));
@@ -645,15 +647,22 @@ export const postsRouter = createTRPCRouter({
       const totalPosts =
         schedule.postsPerSlot * schedule.timeSlots.length * dates.length;
 
-      await ctx.db.postGenerationProgress.create({
-        data: {
-          scheduleId,
-          total: totalPosts,
-          completed: 0,
-        },
+      // Initialize or update progress
+      const existingProgress = await ctx.db.postGenerationProgress.findUnique({
+        where: { scheduleId },
       });
+      if (existingProgress) {
+        await ctx.db.postGenerationProgress.update({
+          where: { scheduleId },
+          data: { total: totalPosts, completed: 0 },
+        });
+      } else {
+        await ctx.db.postGenerationProgress.create({
+          data: { scheduleId, total: totalPosts, completed: 0 },
+        });
+      }
 
-      const posts = [];
+      let completed = 0;
       for (const date of dates) {
         for (const timeSlot of schedule.timeSlots) {
           const [hh, mm] = timeSlot.split(":").map(Number);
@@ -663,40 +672,42 @@ export const postsRouter = createTRPCRouter({
               message: `Invalid time slot format: ${timeSlot}`,
             });
           }
-          for (let i = 0; i < schedule.postsPerSlot; i++) {
-            const scheduledAt = new Date(date);
-            scheduledAt.setHours(hh, mm, 0, 0);
+          const scheduledAt = new Date(date);
+          scheduledAt.setHours(hh, mm, 0, 0);
 
-            const completion = await openai.chat.completions.create({
+          for (let i = 0; i < schedule.postsPerSlot; i++) {
+            // Generate content
+            const contentResponse = await openai.chat.completions.create({
               model: "gpt-4o-mini",
               messages: [
                 {
                   role: "system",
-                  content:
-                    "You are an expert social media content creator. Generate engaging content, hashtags, and an image prompt for a social media post based on the provided prompt. Return JSON with fields: content (string), hashtags (array of strings), imagePrompt (string).",
+                  content: "You are an expert social media content creator.",
                 },
                 { role: "user", content: prompt },
               ],
             });
+            const content =
+              contentResponse.choices[0]?.message?.content ||
+              "Default content generated";
 
-            const result = completion.choices[0]?.message?.content;
-            if (!result) {
-              throw new TRPCError({
-                code: "INTERNAL_SERVER_ERROR",
-                message: "AI did not return content",
-              });
-            }
-
-            const { content, hashtags, imagePrompt } = JSON.parse(result);
-
+            // Generate image
             const imageResponse = await openai.images.generate({
               model: "dall-e-3",
-              prompt: imagePrompt,
+              prompt: prompt,
               n: 1,
               size: "1024x1024",
             });
 
+            if (!imageResponse.data || imageResponse.data.length === 0) {
+              throw new TRPCError({
+                code: "INTERNAL_SERVER_ERROR",
+                message: "Failed to generate image: no data returned",
+              });
+            }
+
             const imageUrl = imageResponse.data[0]?.url;
+
             if (!imageUrl) {
               throw new TRPCError({
                 code: "INTERNAL_SERVER_ERROR",
@@ -704,13 +715,13 @@ export const postsRouter = createTRPCRouter({
               });
             }
 
+            // Create post
             const post = await ctx.db.post.create({
               data: {
                 workspaceId,
                 createdById: ctx.session.user.id,
                 content,
-                hashtags,
-                status: PostStatus.DRAFT,
+                status: PostStatus.CONTENT_PENDING_APPROVAL,
                 scheduledAt,
                 aiPrompt: prompt,
                 aiModel: "gpt-4o-mini",
@@ -721,19 +732,18 @@ export const postsRouter = createTRPCRouter({
                 images: {
                   create: {
                     url: imageUrl,
-                    aiPrompt: imagePrompt,
-                    order: 0,
+                    aiPrompt: prompt,
                     isApproved: false,
+                    order: 0,
                   },
                 },
               },
             });
 
-            posts.push(post);
-
+            completed++;
             await ctx.db.postGenerationProgress.update({
               where: { scheduleId },
-              data: { completed: { increment: 1 } },
+              data: { completed },
             });
           }
         }
@@ -744,7 +754,7 @@ export const postsRouter = createTRPCRouter({
         data: { lastGeneratedAt: new Date() },
       });
 
-      return { success: true, posts };
+      return { success: true };
     }),
 
   getGenerationProgress: protectedProcedure
@@ -843,6 +853,24 @@ export const postsRouter = createTRPCRouter({
         },
       });
 
+      return { success: true };
+    }),
+
+  deleteAllPosts: protectedProcedure
+    .input(z.object({ scheduleId: z.string(), workspaceId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      await ctx.db.post.deleteMany({
+        where: { scheduleId: input.scheduleId, workspaceId: input.workspaceId },
+      });
+      return { success: true };
+    }),
+
+  deletePost: protectedProcedure
+    .input(z.object({ postId: z.string(), workspaceId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      await ctx.db.post.delete({
+        where: { id: input.postId, workspaceId: input.workspaceId },
+      });
       return { success: true };
     }),
 

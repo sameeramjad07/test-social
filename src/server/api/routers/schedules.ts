@@ -207,6 +207,7 @@ export const schedulesRouter = createTRPCRouter({
                   platform: true,
                 },
               },
+              images: true,
             },
           },
         },

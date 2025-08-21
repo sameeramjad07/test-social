@@ -13,11 +13,10 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  CardFooter,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -29,18 +28,9 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Progress } from "@/components/ui/progress";
 import {
   ArrowLeft,
-  Edit,
-  Calendar,
   Play,
   Plus,
   Instagram,
@@ -48,10 +38,22 @@ import {
   Facebook,
   Linkedin,
   Sparkles,
+  Trash2,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
-import { format, differenceInDays } from "date-fns";
+import { format } from "date-fns";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const platformIcons = {
   INSTAGRAM: {
@@ -61,7 +63,7 @@ const platformIcons = {
   FACEBOOK: { icon: Facebook, color: "bg-blue-600" },
   LINKEDIN: { icon: Linkedin, color: "bg-blue-700" },
   TWITTER: { icon: Twitter, color: "bg-blue-400" },
-  TIKTOK: { icon: Twitter, color: "bg-black" }, // Using Twitter icon as placeholder for TikTok
+  TIKTOK: { icon: Twitter, color: "bg-black" },
 };
 
 const scheduleFormSchema = z.object({
@@ -75,9 +77,6 @@ const scheduleFormSchema = z.object({
   monthDays: z.array(z.number().min(1).max(31)).optional(),
   timeSlots: z.array(z.string()).min(1),
   postsPerSlot: z.number().min(1),
-  contentPrompt: z.string().optional(),
-  imagePrompt: z.string().optional(),
-  hashtags: z.array(z.string()).optional(),
 });
 
 type ScheduleForm = z.infer<typeof scheduleFormSchema>;
@@ -102,24 +101,29 @@ export default function ScheduleEditorPage() {
     onError: (error) => toast.error(error.message),
   });
 
-  const generateBulkPosts = api.posts.generateBulkPosts.useMutation({
-    onSuccess: () => toast.success("All posts generated successfully"),
-    onError: (error) => toast.error(error.message),
-  });
-
-  const { data: progress, refetch: refetchProgress } =
-    api.posts.getGenerationProgress.useQuery(
-      { scheduleId },
-      { enabled: !!scheduleId, refetchInterval: 5000 }
-    );
-
   const activateSchedule = api.schedules.activateSchedule.useMutation({
     onSuccess: () => toast.success("Schedule activated"),
     onError: (error) => toast.error(error.message),
   });
 
-  const { register, handleSubmit, setValue, getValues } = useForm<ScheduleForm>(
-    {
+  const generateBulkPosts = api.posts.generateBulkPosts.useMutation({
+    onSuccess: () => {
+      toast.success("Post generation started");
+      refetchProgress();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const deleteAllPosts = api.posts.deleteAllPosts.useMutation({
+    onSuccess: () => {
+      toast.success("All posts deleted");
+      refetchSchedule();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const { register, handleSubmit, setValue, getValues, reset } =
+    useForm<ScheduleForm>({
       resolver: zodResolver(scheduleFormSchema),
       defaultValues: {
         name: "",
@@ -128,12 +132,20 @@ export default function ScheduleEditorPage() {
         frequency: ScheduleFrequency.DAILY,
         timeSlots: ["12:00"],
         postsPerSlot: 1,
-        hashtags: [],
       },
-    }
-  );
+    });
 
-  const [bulkPrompt, setBulkPrompt] = useState("");
+  const [generatePrompt, setGeneratePrompt] = useState("");
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const { refetch: refetchSchedule } = api.schedules.getSchedule.useQuery(
+    { scheduleId, workspaceId },
+    { enabled: false }
+  );
+  const { data: progress, refetch: refetchProgress } =
+    api.posts.getGenerationProgress.useQuery(
+      { scheduleId },
+      { enabled: false, refetchInterval: 5000 }
+    );
 
   useEffect(() => {
     if (schedule) {
@@ -150,10 +162,6 @@ export default function ScheduleEditorPage() {
       setValue("monthDays", schedule.monthDays);
       setValue("timeSlots", schedule.timeSlots);
       setValue("postsPerSlot", schedule.postsPerSlot);
-      setValue("contentPrompt", schedule.contentPrompt || "");
-      setValue("imagePrompt", schedule.imagePrompt || "");
-      setValue("hashtags", schedule.hashtags);
-      setBulkPrompt(schedule.contentPrompt || "");
     }
   }, [schedule, setValue]);
 
@@ -166,69 +174,34 @@ export default function ScheduleEditorPage() {
     });
   };
 
-  const handleGenerateBulkPosts = () => {
-    generateBulkPosts.mutate({ scheduleId, workspaceId, prompt: bulkPrompt });
-  };
-
   const handleActivate = () => {
     activateSchedule.mutate({ scheduleId, workspaceId });
   };
 
-  // Calculate dates for post generation
-  const dates = schedule
-    ? (() => {
-        const result = [];
-        let current = new Date(schedule.startDate);
-        const end = schedule.endDate
-          ? new Date(schedule.endDate)
-          : new Date(current.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days default
-        while (current <= end) {
-          let include = false;
-          const dayOfWeek = current.getDay();
-          const dayOfMonth = current.getDate();
-          switch (schedule.frequency) {
-            case "DAILY":
-              include = true;
-              break;
-            case "WEEKLY":
-              if (schedule.weekDays.includes(dayOfWeek)) {
-                include = true;
-              }
-              break;
-            case "MONTHLY":
-              if (schedule.monthDays.includes(dayOfMonth)) {
-                include = true;
-              }
-              break;
-            case "CUSTOM":
-              if (
-                schedule.weekDays.includes(dayOfWeek) ||
-                schedule.monthDays.includes(dayOfMonth)
-              ) {
-                include = true;
-              }
-              break;
-          }
-          if (include) {
-            result.push(new Date(current));
-          }
-          current.setDate(current.getDate() + 1);
-        }
-        return result;
-      })()
-    : [];
+  const handleGenerateBulkPosts = () => {
+    if (!generatePrompt) {
+      toast.error("Please provide a detailed prompt");
+      return;
+    }
+    generateBulkPosts.mutate({
+      scheduleId,
+      workspaceId,
+      prompt: generatePrompt,
+    });
+  };
 
-  const totalPosts = schedule
-    ? schedule.postsPerSlot * schedule.timeSlots.length * dates.length
-    : 0;
+  const handleDeleteAllPosts = () => {
+    setShowDeleteDialog(true);
+  };
+
+  const confirmDeleteAllPosts = () => {
+    deleteAllPosts.mutate({ scheduleId, workspaceId });
+    setShowDeleteDialog(false);
+  };
 
   const allPostsApproved = schedule?.posts.every(
     (post) => post.status === PostStatus.APPROVED
   );
-
-  const completionPercentage = progress
-    ? (progress.completed / progress.total) * 100
-    : 0;
 
   if (isLoading) {
     return (
@@ -245,6 +218,42 @@ export default function ScheduleEditorPage() {
       </div>
     );
   }
+
+  const calculateTotalPosts = () => {
+    let datesCount = 0;
+    let current = new Date(schedule.startDate);
+    const end = schedule.endDate
+      ? new Date(schedule.endDate)
+      : new Date(current.getTime() + 30 * 24 * 60 * 60 * 1000);
+    while (current <= end) {
+      let include = false;
+      const dayOfWeek = current.getDay();
+      const dayOfMonth = current.getDate();
+      switch (schedule.frequency) {
+        case "DAILY":
+          include = true;
+          break;
+        case "WEEKLY":
+          if (schedule.weekDays?.includes(dayOfWeek)) include = true;
+          break;
+        case "MONTHLY":
+          if (schedule.monthDays?.includes(dayOfMonth)) include = true;
+          break;
+        case "CUSTOM":
+          if (
+            schedule.weekDays?.includes(dayOfWeek) ||
+            schedule.monthDays?.includes(dayOfMonth)
+          )
+            include = true;
+          break;
+      }
+      if (include) datesCount++;
+      current.setDate(current.getDate() + 1);
+    }
+    return schedule.postsPerSlot * schedule.timeSlots.length * datesCount;
+  };
+
+  const totalPosts = calculateTotalPosts();
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
@@ -304,18 +313,27 @@ export default function ScheduleEditorPage() {
                   Activate Schedule
                 </Button>
               )}
+              <Button
+                onClick={() =>
+                  router.push(
+                    `/workspace/${workspaceId}/schedule/${scheduleId}/posts`
+                  )
+                }
+                variant="outline"
+              >
+                View Posts
+              </Button>
             </div>
           </div>
         </motion.div>
 
-        <Tabs defaultValue="details" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="details">Details</TabsTrigger>
-            <TabsTrigger value="posts">Posts</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="details">
-            <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm dark:bg-slate-900/80">
+        <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm dark:bg-slate-900/80">
+          <Tabs defaultValue="edit" className="w-full">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="edit">Edit Schedule Details</TabsTrigger>
+              <TabsTrigger value="generate">Generate Posts</TabsTrigger>
+            </TabsList>
+            <TabsContent value="edit">
               <CardHeader>
                 <CardTitle>Edit Schedule Details</CardTitle>
                 <CardDescription>
@@ -433,56 +451,54 @@ export default function ScheduleEditorPage() {
                       {...register("postsPerSlot", { valueAsNumber: true })}
                     />
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="contentPrompt">Content Prompt</Label>
-                    <Textarea
-                      id="contentPrompt"
-                      {...register("contentPrompt")}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="imagePrompt">Image Prompt</Label>
-                    <Textarea id="imagePrompt" {...register("imagePrompt")} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="hashtags">Hashtags</Label>
-                    <Input
-                      id="hashtags"
-                      onChange={(e) =>
-                        setValue(
-                          "hashtags",
-                          e.target.value
-                            .split(",")
-                            .map((t) => t.trim())
-                            .filter((t) => t.length > 0)
-                        )
-                      }
-                      value={getValues("hashtags")?.join(", ") || ""}
-                    />
-                  </div>
                   <Button type="submit" disabled={updateSchedule.isPending}>
                     {updateSchedule.isPending ? "Saving..." : "Save Changes"}
                   </Button>
                 </form>
               </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="posts">
-            <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm dark:bg-slate-900/80">
+            </TabsContent>
+            <TabsContent value="generate">
               <CardHeader>
-                <CardTitle>Posts</CardTitle>
+                <CardTitle>Generate Posts</CardTitle>
                 <CardDescription>
-                  Generate and manage all posts for this schedule
+                  Generate content, images, and hashtags for your schedule
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
-                {schedule.posts.length === 0 && (
+                {schedule.posts.length > 0 ? (
                   <div className="space-y-4">
+                    <p className="text-sm text-slate-600 dark:text-slate-400">
+                      Posts for this schedule have already been created. You can
+                      view and manage them on the{" "}
+                      <Button
+                        variant="link"
+                        onClick={() =>
+                          router.push(
+                            `/workspace/${workspaceId}/schedule/${scheduleId}/posts`
+                          )
+                        }
+                        className="p-0 h-auto text-blue-600 dark:text-blue-400"
+                      >
+                        Posts page
+                      </Button>
+                      .
+                    </p>
+                    <Button
+                      variant="destructive"
+                      onClick={handleDeleteAllPosts}
+                      disabled={deleteAllPosts.isPending}
+                    >
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      Delete All Posts
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
                     <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-lg">
                       <p className="text-sm text-slate-600 dark:text-slate-400">
                         Based on your schedule configuration, {totalPosts} posts
-                        will be generated for the following:
+                        will be generated. Please keep the following in mind
+                        when crafting your prompt:
                       </p>
                       <ul className="list-disc list-inside text-sm text-slate-600 dark:text-slate-400 mt-2">
                         <li>
@@ -491,7 +507,10 @@ export default function ScheduleEditorPage() {
                         </li>
                         <li>
                           <strong>Dates:</strong>{" "}
-                          {dates.map((d) => format(d, "PPP")).join(", ")}
+                          {format(schedule.startDate, "PPP")} to{" "}
+                          {schedule.endDate
+                            ? format(schedule.endDate, "PPP")
+                            : "30 days from start"}
                         </li>
                         <li>
                           <strong>Time Slots:</strong>{" "}
@@ -504,28 +523,34 @@ export default function ScheduleEditorPage() {
                       </ul>
                       <p className="text-sm text-slate-600 dark:text-slate-400 mt-2">
                         Provide a detailed prompt below to generate content,
-                        images, and hashtags for all posts.
+                        images, and hashtags tailored to these specifications.
                       </p>
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="bulk-prompt">Content Prompt</Label>
+                      <Label
+                        htmlFor="generate-prompt"
+                        className="text-sm font-medium"
+                      >
+                        Detailed Prompt
+                      </Label>
                       <Textarea
-                        id="bulk-prompt"
-                        value={bulkPrompt}
-                        onChange={(e) => setBulkPrompt(e.target.value)}
+                        id="generate-prompt"
+                        value={generatePrompt}
+                        onChange={(e) => setGeneratePrompt(e.target.value)}
                         rows={6}
-                        placeholder="Enter a detailed prompt for generating all posts (e.g., 'Create engaging posts about sustainable fashion for young professionals, including vibrant images and relevant hashtags')"
+                        className="w-full p-2 border rounded-md"
+                        placeholder="Enter a detailed prompt (e.g., 'Create engaging posts about sustainable fashion for young professionals on Instagram and LinkedIn, with vibrant images and hashtags like #SustainableFashion #EcoFriendly')"
                       />
                     </div>
                     <Button
                       onClick={handleGenerateBulkPosts}
-                      disabled={generateBulkPosts.isPending}
+                      disabled={generateBulkPosts.isPending || !generatePrompt}
                       className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
                     >
                       <Sparkles className="w-4 h-4 mr-2" />
                       {generateBulkPosts.isPending
-                        ? "Generating Posts..."
-                        : "Generate All Posts"}
+                        ? "Generating..."
+                        : "Confirm to Generate"}
                     </Button>
                   </div>
                 )}
@@ -535,81 +560,61 @@ export default function ScheduleEditorPage() {
                       <span>Generation Progress</span>
                       <span>
                         {progress.completed}/{progress.total} posts (
-                        {Math.round(completionPercentage)}%)
+                        {Math.round(
+                          (progress.completed / progress.total) * 100
+                        )}
+                        %)
                       </span>
                     </div>
-                    <Progress value={completionPercentage} className="h-2" />
+                    <Progress
+                      value={(progress.completed / progress.total) * 100}
+                      className="h-2"
+                    />
+                    {progress.completed === progress.total && (
+                      <p className="text-sm text-green-600 dark:text-green-400">
+                        Generation completed at {format(new Date(), "PPP p")}.
+                      </p>
+                    )}
                   </div>
                 )}
-                {schedule.posts.length > 0 && (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Scheduled Date</TableHead>
-                        <TableHead>Platforms</TableHead>
-                        <TableHead>Content</TableHead>
-                        <TableHead>Image</TableHead>
-                        <TableHead>Hashtags</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Action</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {schedule.posts.map((post) => (
-                        <TableRow key={post.id}>
-                          <TableCell>
-                            {post.scheduledAt
-                              ? format(post.scheduledAt, "PPP HH:mm")
-                              : "Not scheduled"}
-                          </TableCell>
-                          <TableCell>
-                            {post.socialAccounts
-                              .map((acc) => acc.platform)
-                              .join(", ")}
-                          </TableCell>
-                          <TableCell className="max-w-xs truncate">
-                            {post.content || "No content"}
-                          </TableCell>
-                          <TableCell>
-                            {post.images[0]?.url ? (
-                              <img
-                                src={post.images[0].url}
-                                alt="Post image"
-                                className="w-16 h-16 object-cover rounded"
-                              />
-                            ) : (
-                              "No image"
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            {post.hashtags.map((tag) => `#${tag}`).join(", ")}
-                          </TableCell>
-                          <TableCell>
-                            <Badge>{post.status}</Badge>
-                          </TableCell>
-                          <TableCell>
-                            <Button
-                              variant="outline"
-                              onClick={() =>
-                                router.push(
-                                  `/workspace/${workspaceId}/schedule/${scheduleId}/post/${post.id}`
-                                )
-                              }
-                              disabled={post.status === PostStatus.APPROVED}
-                            >
-                              <Edit className="w-4 h-4 mr-2" />
-                              Edit
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                )}
               </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
+              <CardFooter>
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    router.push(
+                      `/workspace/${workspaceId}/schedule/${scheduleId}/posts`
+                    )
+                  }
+                  className="mt-4"
+                >
+                  View Posts
+                </Button>
+              </CardFooter>
+            </TabsContent>
+          </Tabs>
+        </Card>
+
+        <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Confirm Delete</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to delete all posts for this schedule?
+                This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={confirmDeleteAllPosts}
+                disabled={deleteAllPosts.isPending}
+              >
+                {deleteAllPosts.isPending ? "Deleting..." : "Delete"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </div>
   );
