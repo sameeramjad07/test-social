@@ -1,7 +1,9 @@
 import "@/styles/globals.css";
 import type { Metadata } from "next";
 import { Geist } from "next/font/google";
-import { AppWrapper } from "@/lib/appWrapper";
+import { SessionProvider } from "next-auth/react";
+import { TRPCReactProvider } from "@/trpc/react";
+import { Toaster } from "sonner";
 
 export const metadata: Metadata = {
   title: "Social Manager",
@@ -20,7 +22,12 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${geist.variable}`}>
       <body>
-        <AppWrapper>{children}</AppWrapper>
+        <SessionProvider>
+          <TRPCReactProvider>
+            {children}
+            <Toaster />
+          </TRPCReactProvider>
+        </SessionProvider>
       </body>
     </html>
   );
