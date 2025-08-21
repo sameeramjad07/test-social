@@ -185,8 +185,11 @@ export function CalendarSidebar({
                 <div className="flex items-center gap-2 text-xs text-slate-500">
                   <Calendar className="w-3 h-3" />
                   <span>{schedule.totalPosts} posts</span>
-                  <Badge variant="outline" className="text-xs">
-                    {schedule.status}
+                  <Badge
+                    variant={schedule.isActive ? "default" : "secondary"}
+                    className="text-xs"
+                  >
+                    {schedule.isActive ? "Active" : "Draft"}
                   </Badge>
                 </div>
               </div>
