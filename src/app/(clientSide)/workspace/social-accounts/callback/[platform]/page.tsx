@@ -1,4 +1,4 @@
-'use client'
+"use client";
 
 import { useEffect, useState } from "react";
 import { Platform } from "@prisma/client";
@@ -12,21 +12,24 @@ export default function SocialAccountCallbackPage() {
   const searchParams = useSearchParams();
   const [error, setError] = useState<string | null>(null);
 
-  const { mutate: handleCallback } = api.socialAccounts.handleCallback.useMutation({
-    onSuccess: (data) => {
-      toast.success("Account connected");
-      router.push(`/workspace/${data.stateData.workspaceId}/settings`);
-    },
-    onError: (error) => {
-      setError(error.message);
-    },
-  });
+  const { mutate: handleCallback } =
+    api.socialAccounts.handleCallback.useMutation({
+      onSuccess: (data) => {
+        toast.success("Account connected");
+        router.push(`/workspace/${data.stateData.workspaceId}/settings`);
+      },
+      onError: (error) => {
+        setError(error.message);
+      },
+    });
 
   useEffect(() => {
     const platform = searchParams.get("platform");
     const code = searchParams.get("code");
     const state = searchParams.get("state");
     const oauthError = searchParams.get("error");
+
+    console.log("Callback Params:", { platform, code, state, oauthError });
 
     if (oauthError) {
       setError(oauthError);
@@ -39,6 +42,8 @@ export default function SocialAccountCallbackPage() {
         code: code,
         state: state,
       });
+    } else {
+      setError("Missing required query parameters (platform, code, or state)");
     }
   }, [searchParams, handleCallback]);
 
@@ -49,12 +54,10 @@ export default function SocialAccountCallbackPage() {
           <h1 className="text-2xl font-bold text-destructive">
             Connection Failed
           </h1>
-          <p className="text-muted-foreground max-w-md">
-            {error}
-          </p>
+          <p className="text-muted-foreground max-w-md">{error}</p>
           <button
             onClick={() => {
-                router.push(`/`);
+              router.push(`/`);
             }}
             className="text-primary hover:underline"
           >

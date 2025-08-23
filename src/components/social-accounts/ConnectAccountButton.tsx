@@ -1,12 +1,8 @@
-'use client'
+"use client";
+
 import { useState } from "react";
 import { Platform } from "@prisma/client";
-import { 
-  Instagram, 
-  Facebook, 
-  Linkedin, 
-  Loader2 
-} from "lucide-react";
+import { Instagram, Facebook, Linkedin, Loader2 } from "lucide-react";
 import { api } from "@/trpc/react";
 import { toast } from "sonner";
 import { Button } from "../ui/button";
@@ -24,7 +20,7 @@ const platformConfig = {
     color: "bg-gradient-to-r from-purple-500 to-pink-500",
   },
   [Platform.FACEBOOK]: {
-    name: "Facebook", 
+    name: "Facebook",
     icon: Facebook,
     color: "bg-blue-600",
   },
@@ -35,21 +31,24 @@ const platformConfig = {
   },
 } as any;
 
-export function ConnectAccountButton({ 
-  platform, 
-  workspaceId, 
-  onSuccess 
+export function ConnectAccountButton({
+  platform,
+  workspaceId,
+  onSuccess,
 }: ConnectAccountButtonProps) {
   const [isConnecting, setIsConnecting] = useState(false);
-  
+
   const { mutate: getAuthUrl } = api.socialAccounts.getAuthUrl.useMutation({
     onSuccess: (data) => {
-      // Redirect to OAuth provider
+      console.log(`[${platform}] Auth URL:`, data.authUrl); // Debug log
       window.location.href = data.authUrl;
     },
     onError: (error) => {
       setIsConnecting(false);
-      toast.error("Connection failed");
+      toast.error(
+        `Failed to connect ${platformConfig[platform].name}: ${error.message}`
+      );
+      console.error(`[${platform}] Connection error:`, error);
     },
   });
 

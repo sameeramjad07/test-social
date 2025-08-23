@@ -69,8 +69,8 @@ const changePasswordSchema = z.object({
 function createSlug(name: string): string {
   return name
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
     .substring(0, 50);
 }
 
@@ -117,9 +117,10 @@ export const authRouter = createTRPCRouter({
           });
 
           // Create default workspace
-          const defaultWorkspaceName = workspaceName || `${name.trim()}'s Workspace`;
+          const defaultWorkspaceName =
+            workspaceName || `${name.trim()}'s Workspace`;
           let slug = createSlug(defaultWorkspaceName);
-          
+
           // Ensure unique slug
           let slugSuffix = 1;
           while (await tx.workspace.findUnique({ where: { slug } })) {
@@ -154,7 +155,7 @@ export const authRouter = createTRPCRouter({
 
             // Get all permissions and assign to owner role
             const allPermissions = await tx.permission.findMany();
-            const oRole = ownerRole
+            const oRole = ownerRole;
             if (allPermissions.length > 0) {
               await tx.rolePermission.createMany({
                 data: allPermissions.map((permission) => ({
@@ -276,7 +277,7 @@ export const authRouter = createTRPCRouter({
               joinedAt: true,
             },
             orderBy: {
-              joinedAt: 'asc',
+              joinedAt: "asc",
             },
           },
           _count: {
@@ -665,65 +666,6 @@ export const authRouter = createTRPCRouter({
       throw new TRPCError({
         code: "INTERNAL_SERVER_ERROR",
         message: "Failed to fetch user statistics",
-      });
-    }
-  }),
-
-  // Get workspaces user has access to
-  getWorkspaces: protectedProcedure.query(async ({ ctx }) => {
-    try {
-      const workspaces = await ctx.db.workspaceMember.findMany({
-        where: { userId: ctx.session.user.id },
-        select: {
-          workspace: {
-            select: {
-              id: true,
-              name: true,
-              slug: true,
-              logoUrl: true,
-              createdAt: true,
-              _count: {
-                select: {
-                  members: true,
-                  posts: true,
-                  socialAccounts: true,
-                },
-              },
-            },
-          },
-          role: {
-            select: {
-              id: true,
-              name: true,
-              description: true,
-            },
-          },
-          joinedAt: true,
-        },
-        orderBy: {
-          joinedAt: 'asc',
-        },
-      });
-
-      return workspaces.map((wm) => ({
-        id: wm.workspace.id,
-        name: wm.workspace.name,
-        slug: wm.workspace.slug,
-        logoUrl: wm.workspace.logoUrl,
-        role: wm.role,
-        joinedAt: wm.joinedAt,
-        createdAt: wm.workspace.createdAt,
-        stats: {
-          members: wm.workspace._count.members,
-          posts: wm.workspace._count.posts,
-          socialAccounts: wm.workspace._count.socialAccounts,
-        },
-      }));
-    } catch (error) {
-      console.error("Get workspaces error:", error);
-      throw new TRPCError({
-        code: "INTERNAL_SERVER_ERROR",
-        message: "Failed to fetch workspaces",
       });
     }
   }),

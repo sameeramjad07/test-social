@@ -88,9 +88,9 @@ export const authConfig: NextAuthConfig = {
               hashedPassword: true,
               workspaces: {
                 select: {
-                  workspace: true
-                }
-              }
+                  workspace: true,
+                },
+              },
             },
           });
 
@@ -108,14 +108,14 @@ export const authConfig: NextAuthConfig = {
           }
 
           // Extract the actual workspace objects from the WorkspaceMember relation
-          const workspaces = user.workspaces.map(wm => wm.workspace);
+          const workspaces = user.workspaces.map((wm) => wm.workspace);
 
           return {
             id: user.id,
             name: user.name,
             email: user.email,
             image: user.image,
-            workspaces: workspaces
+            workspaces: workspaces,
           };
         } catch (error) {
           console.error("Authentication error:", error);
@@ -141,43 +141,50 @@ export const authConfig: NextAuthConfig = {
       return token;
     },
     async session({ session, token }) {
-      if (session.user) {
-        session.user.id = token.id as string;
-
-      }
-      const user = await db.user.findUnique({
-        where: {
+      if (token?.id) {
+        session.user = {
+          ...session.user,
           id: token.id as string,
-        },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          image: true,
-          hashedPassword: true,
-          workspaces: {
-            select: {
-              workspace: true
-            }
-          }
-        },
-      });
-
-      if (!user || !user.hashedPassword) {
-        return session;
+        };
       }
+      if (token?.id) {
+        const user = await db.user.findUnique({
+          where: {
+            id: token.id as string,
+          },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            image: true,
+            hashedPassword: true,
+            workspaces: {
+              select: {
+                workspace: true,
+              },
+            },
+          },
+        });
 
-      // Extract the actual workspace objects from the WorkspaceMember relation
-      const workspaces = user.workspaces.map(wm => wm.workspace);
+        if (!user || !user.hashedPassword) {
+          return session;
+        }
 
-      return {
-        ...session,
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        image: user.image,
-        workspaces: workspaces
-      };
+        if (user) {
+          // Extract the actual workspace objects from the WorkspaceMember relation
+          const workspaces = user.workspaces.map((wm) => wm.workspace);
+
+          session.user = {
+            ...session.user,
+            id: user.id,
+            name: user.name ?? "",
+            email: user.email ?? "",
+            image: user.image ?? "",
+            workspaces: workspaces,
+          };
+        }
+      }
+      return session;
     },
   },
   events: {
