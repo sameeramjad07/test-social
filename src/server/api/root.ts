@@ -6,6 +6,7 @@ import { workspacesRouter } from "./routers/workspace";
 import { schedulesRouter } from "./routers/schedules";
 import { analyticsRouter } from "./routers/analytics";
 import { calendarRouter } from "./routers/calendar";
+import { adminRouter } from "./routers/admin";
 
 /**
  * This is the primary router for your server.
@@ -20,6 +21,7 @@ export const appRouter = createTRPCRouter({
   schedules: schedulesRouter,
   analytics: analyticsRouter,
   calendar: calendarRouter,
+  admin: adminRouter,
 });
 
 // export type definition of API

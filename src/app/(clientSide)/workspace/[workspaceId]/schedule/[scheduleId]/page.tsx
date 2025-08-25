@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, Controller } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter, useParams } from "next/navigation";
@@ -122,7 +122,19 @@ export default function ScheduleEditorPage() {
     onError: (error) => toast.error(error.message),
   });
 
-  const { register, handleSubmit, setValue, getValues, reset } =
+  const handleAddTimeSlot = () => {
+    const timeSlots = getValues("timeSlots");
+    setValue("timeSlots", [...timeSlots, "12:00"]);
+  };
+
+  const handleRemoveTimeSlot = (index: number) => {
+    if (getValues("timeSlots").length > 1) {
+      const timeSlots = getValues("timeSlots").filter((_, i) => i !== index);
+      setValue("timeSlots", timeSlots);
+    }
+  };
+
+  const { register, handleSubmit, setValue, getValues, reset, watch, control } =
     useForm<ScheduleForm>({
       resolver: zodResolver(scheduleFormSchema),
       defaultValues: {
@@ -134,6 +146,8 @@ export default function ScheduleEditorPage() {
         postsPerSlot: 1,
       },
     });
+
+  const timeSlots = watch("timeSlots");
 
   const [generatePrompt, setGeneratePrompt] = useState("");
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
@@ -149,21 +163,20 @@ export default function ScheduleEditorPage() {
 
   useEffect(() => {
     if (schedule) {
-      setValue("name", schedule.name);
-      setValue("description", schedule.description || "");
-      setValue("platforms", schedule.platforms);
-      setValue("startDate", format(schedule.startDate, "yyyy-MM-dd"));
-      setValue(
-        "endDate",
-        schedule.endDate ? format(schedule.endDate, "yyyy-MM-dd") : ""
-      );
-      setValue("frequency", schedule.frequency);
-      setValue("weekDays", schedule.weekDays);
-      setValue("monthDays", schedule.monthDays);
-      setValue("timeSlots", schedule.timeSlots);
-      setValue("postsPerSlot", schedule.postsPerSlot);
+      reset({
+        name: schedule.name,
+        description: schedule.description || "",
+        platforms: schedule.platforms,
+        startDate: format(schedule.startDate, "yyyy-MM-dd"),
+        endDate: schedule.endDate ? format(schedule.endDate, "yyyy-MM-dd") : "",
+        frequency: schedule.frequency,
+        weekDays: schedule.weekDays || [],
+        monthDays: schedule.monthDays || [],
+        timeSlots: schedule.timeSlots,
+        postsPerSlot: schedule.postsPerSlot,
+      });
     }
-  }, [schedule, setValue]);
+  }, [schedule, reset]);
 
   const onSubmit = (data: ScheduleForm) => {
     updateSchedule.mutate({
@@ -178,16 +191,30 @@ export default function ScheduleEditorPage() {
     activateSchedule.mutate({ scheduleId, workspaceId });
   };
 
-  const handleGenerateBulkPosts = () => {
+  const handleGenerateBulkPosts = async () => {
     if (!generatePrompt) {
       toast.error("Please provide a detailed prompt");
       return;
     }
-    generateBulkPosts.mutate({
-      scheduleId,
-      workspaceId,
-      prompt: generatePrompt,
-    });
+    try {
+      await generateBulkPosts.mutateAsync({
+        scheduleId,
+        workspaceId,
+        prompt: generatePrompt,
+      });
+      // Periodically refetch progress until completion
+      const interval = setInterval(() => {
+        refetchProgress();
+        if (progress?.completed === progress?.total) {
+          clearInterval(interval);
+          toast.success("Post generation completed");
+        }
+      }, 5000);
+    } catch (error) {
+      toast.error(
+        "Failed to start generation process: " + (error as Error).message
+      );
+    }
   };
 
   const handleDeleteAllPosts = () => {
@@ -419,25 +446,46 @@ export default function ScheduleEditorPage() {
                   <div className="space-y-2">
                     <Label>Time Slots</Label>
                     <div className="space-y-2">
-                      {getValues("timeSlots").map((slot, index) => (
-                        <Input
-                          key={index}
-                          type="time"
-                          onChange={(e) => {
-                            const timeSlots = getValues("timeSlots");
-                            timeSlots[index] = e.target.value;
-                            setValue("timeSlots", timeSlots);
-                          }}
-                          value={slot}
-                        />
+                      {timeSlots.map((slot, index) => (
+                        <div key={index} className="flex items-center gap-2">
+                          <Controller
+                            control={control}
+                            name="timeSlots"
+                            render={({ field }) => (
+                              <Input
+                                type="time"
+                                value={slot}
+                                onChange={(e) => {
+                                  const newTimeSlots = [...field.value];
+                                  newTimeSlots[index] = e.target.value;
+                                  field.onChange(newTimeSlots);
+                                }}
+                              />
+                            )}
+                          />
+                          {timeSlots.length > 1 && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => {
+                                const newTimeSlots = timeSlots.filter(
+                                  (_, i) => i !== index
+                                );
+                                setValue("timeSlots", newTimeSlots);
+                              }}
+                              className="h-9"
+                            >
+                              <Trash2 className="w-4 h-4 text-red-600" />
+                            </Button>
+                          )}
+                        </div>
                       ))}
                       <Button
                         type="button"
                         variant="outline"
-                        onClick={() => {
-                          const timeSlots = getValues("timeSlots");
-                          setValue("timeSlots", [...timeSlots, "12:00"]);
-                        }}
+                        onClick={() =>
+                          setValue("timeSlots", [...timeSlots, "12:00"])
+                        }
                       >
                         <Plus className="w-4 h-4 mr-2" /> Add Time Slot
                       </Button>
@@ -497,8 +545,9 @@ export default function ScheduleEditorPage() {
                     <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-lg">
                       <p className="text-sm text-slate-600 dark:text-slate-400">
                         Based on your schedule configuration, {totalPosts} posts
-                        will be generated. Please keep the following in mind
-                        when crafting your prompt:
+                        will be generated. Provide a detailed prompt below to
+                        guide the AI in creating unique content, images, and
+                        hashtags for each post.
                       </p>
                       <ul className="list-disc list-inside text-sm text-slate-600 dark:text-slate-400 mt-2">
                         <li>
@@ -521,10 +570,6 @@ export default function ScheduleEditorPage() {
                           {schedule.postsPerSlot}
                         </li>
                       </ul>
-                      <p className="text-sm text-slate-600 dark:text-slate-400 mt-2">
-                        Provide a detailed prompt below to generate content,
-                        images, and hashtags tailored to these specifications.
-                      </p>
                     </div>
                     <div className="space-y-2">
                       <Label
@@ -550,7 +595,7 @@ export default function ScheduleEditorPage() {
                       <Sparkles className="w-4 h-4 mr-2" />
                       {generateBulkPosts.isPending
                         ? "Generating..."
-                        : "Confirm to Generate"}
+                        : "Start Generation Process"}
                     </Button>
                   </div>
                 )}

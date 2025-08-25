@@ -1,4 +1,3 @@
-// app/workspace/[workspaceId]/calendar/page.tsx
 "use client";
 
 import { useState } from "react";
@@ -26,13 +25,20 @@ export default function CalendarPage() {
   const [viewMode, setViewMode] = useState<"month" | "week" | "day">("month");
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
+  const { data: activeSchedules } = api.schedules.activeList.useQuery(
+    {
+      workspaceId,
+      isActive: true,
+    },
+    {
+      select: (data) => data.filter((s) => s.isActive),
+    }
+  );
+
   const { data: scheduledPosts } = api.posts.list.useQuery({
     workspaceId,
     scheduled: true,
-  });
-
-  const { data: schedules } = api.schedules.list.useQuery({
-    workspaceId,
+    status: "SCHEDULED",
   });
 
   const navigateMonth = (direction: "prev" | "next") => {
@@ -111,7 +117,7 @@ export default function CalendarPage() {
               selectedDate={selectedDate}
               setSelectedDate={setSelectedDate}
               scheduledPosts={scheduledPosts || []}
-              schedules={schedules || []}
+              schedules={activeSchedules || []}
               navigateMonth={navigateMonth}
             />
           </motion.div>

@@ -1,4 +1,3 @@
-// src/components/calendar/post-entry.tsx
 "use client";
 
 import {
@@ -13,6 +12,7 @@ import {
 interface PostEntryProps {
   post: any;
   onClick: (e: React.MouseEvent) => void;
+  scheduleName?: string;
 }
 
 const platforms = [
@@ -21,8 +21,17 @@ const platforms = [
   { name: "LinkedIn", icon: Linkedin, color: "bg-blue-700" },
 ];
 
-export function PostEntry({ post, onClick }: PostEntryProps) {
-  const platform = platforms.find((p) => p.name === post.platform);
+export function PostEntry({ post, onClick, scheduleName }: PostEntryProps) {
+  const platform = platforms.find((p) =>
+    post.socialAccounts.some((acc: any) => acc.platform === p.name)
+  );
+
+  const TypeIcon =
+    post.type === "image"
+      ? ImageIcon
+      : post.type === "video"
+      ? Video
+      : FileText;
 
   return (
     <div
@@ -33,18 +42,21 @@ export function PostEntry({ post, onClick }: PostEntryProps) {
     >
       <div className="flex items-center gap-1 mb-1">
         {platform && <platform.icon className="w-3 h-3" />}
-        <div className="flex items-center gap-1">
-          {post.type === "image" && <ImageIcon className="w-3 h-3" />}
-          {post.type === "video" && <Video className="w-3 h-3" />}
-          {post.type === "text" && <FileText className="w-3 h-3" />}
-        </div>
+        <TypeIcon className="w-3 h-3" />
       </div>
-      <div className="font-medium truncate">{post.title}</div>
+      <div className="font-medium truncate">
+        {post.content?.slice(0, 20) || "Untitled"}
+      </div>
+      {scheduleName && (
+        <div className="text-xs opacity-90 truncate">{scheduleName}</div>
+      )}
       <div className="text-xs opacity-90">
-        {post.date.toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        })}
+        {post.scheduledAt
+          ? new Date(post.scheduledAt).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+          : "No time"}
       </div>
     </div>
   );

@@ -86,6 +86,18 @@ export function ScheduleCard({
     toast.success("Schedule deleted successfully!");
   };
 
+  // Sanitize and validate post counts
+  const validTotalPosts = Math.max(1, schedule.totalPosts || 1); // Ensure at least 1 to avoid division by zero
+  const validPostsGenerated = Math.max(
+    0,
+    Math.min(schedule.postsGenerated, validTotalPosts)
+  ); // Cap at totalPosts, ensure non-negative
+
+  // Calculate progress percentage
+  const progressPercentage = Math.round(
+    (validPostsGenerated / validTotalPosts) * 100
+  );
+
   return (
     <>
       <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm dark:bg-slate-900/80 hover:shadow-xl transition-shadow">
@@ -172,7 +184,7 @@ export function ScheduleCard({
               <div className="flex items-center gap-1">
                 <FileText className="w-4 h-4" />
                 <span>
-                  {schedule.postsGenerated}/{schedule.totalPosts} posts
+                  {validPostsGenerated}/{validTotalPosts} posts
                 </span>
               </div>
             </div>
@@ -183,18 +195,10 @@ export function ScheduleCard({
                   Progress
                 </span>
                 <span className="text-slate-600 dark:text-slate-400">
-                  {Math.round(
-                    (schedule.postsGenerated / (schedule.totalPosts || 1)) * 100
-                  )}
-                  %
+                  {progressPercentage}%
                 </span>
               </div>
-              <Progress
-                value={
-                  (schedule.postsGenerated / (schedule.totalPosts || 1)) * 100
-                }
-                className="h-2"
-              />
+              <Progress value={progressPercentage} className="h-2" />
             </div>
 
             <div className="flex items-center justify-between pt-2">
