@@ -1,19 +1,19 @@
-"use client"
+"use client";
 
-import { useRouter, usePathname } from "next/navigation"
-import { 
-  LayoutDashboard, 
-  Building2, 
-  Users, 
-  Brain, 
-  Calendar, 
+import { useRouter, usePathname } from "next/navigation";
+import {
+  LayoutDashboard,
+  Building2,
+  Users,
+  Brain,
+  Calendar,
   Settings,
   ChevronUp,
   User2,
   Moon,
   Sun,
-  LogOut
-} from "lucide-react"
+  LogOut,
+} from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -26,62 +26,62 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
-} from "@/components/ui/sidebar"
+} from "@/components/ui/sidebar";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
   DropdownMenuSeparator,
-} from "@/components/ui/dropdown-menu"
+} from "@/components/ui/dropdown-menu";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip"
-import { useTheme } from "next-themes"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import type { User } from "@prisma/client"
+} from "@/components/ui/tooltip";
+import { useTheme } from "next-themes";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import type { User } from "@prisma/client";
 
 const navigation = [
-  { 
-    name: "Dashboard", 
-    href: "/admin", 
-    icon: LayoutDashboard 
+  {
+    name: "Dashboard",
+    href: "/admin",
+    icon: LayoutDashboard,
   },
-  { 
-    name: "Workspaces", 
-    href: "/admin/workspaces", 
-    icon: Building2 
+  {
+    name: "Workspaces",
+    href: "/admin/workspaces",
+    icon: Building2,
   },
-  { 
-    name: "Users", 
-    href: "/admin/users", 
-    icon: Users 
+  {
+    name: "Users",
+    href: "/admin/users",
+    icon: Users,
   },
-  { 
-    name: "AI Usage Logs", 
-    href: "/admin/ai-logs", 
-    icon: Brain 
+  {
+    name: "AI Usage Logs",
+    href: "/admin/ai-logs",
+    icon: Brain,
   },
-  { 
-    name: "Posts & Scheduling", 
-    href: "/admin/posts", 
-    icon: Calendar 
+  {
+    name: "Posts & Scheduling",
+    href: "/admin/posts",
+    icon: Calendar,
   },
-  { 
-    name: "Settings", 
-    href: "/admin/settings", 
-    icon: Settings 
+  {
+    name: "Settings",
+    href: "/admin/settings",
+    icon: Settings,
   },
-]
+];
 
-export default function AdminSidebar({user}:{user:User}) {
-  const router = useRouter()
-  const pathname = usePathname()
-  const { theme, setTheme } = useTheme()
-  
+export default function AdminSidebar({ user }: { user: User }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const { theme, setTheme } = useTheme();
+
   return (
     <TooltipProvider delayDuration={0}>
       <Sidebar collapsible="icon">
@@ -95,14 +95,16 @@ export default function AdminSidebar({user}:{user:User}) {
                   </div>
                   <div className="flex flex-col gap-0.5 leading-none">
                     <span className="font-semibold">Super Admin</span>
-                    <span className="text-xs text-muted-foreground">Control Panel</span>
+                    <span className="text-xs text-muted-foreground">
+                      Control Panel
+                    </span>
                   </div>
                 </a>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
         </SidebarHeader>
-        
+
         <SidebarContent>
           <SidebarGroup>
             <SidebarGroupContent>
@@ -119,7 +121,10 @@ export default function AdminSidebar({user}:{user:User}) {
                           <span>{item.name}</span>
                         </SidebarMenuButton>
                       </TooltipTrigger>
-                      <TooltipContent side="right" className="flex items-center gap-4">
+                      <TooltipContent
+                        side="right"
+                        className="flex items-center gap-4"
+                      >
                         {item.name}
                       </TooltipContent>
                     </Tooltip>
@@ -129,7 +134,7 @@ export default function AdminSidebar({user}:{user:User}) {
             </SidebarGroupContent>
           </SidebarGroup>
         </SidebarContent>
-        
+
         <SidebarFooter>
           <SidebarMenu>
             <SidebarMenuItem>
@@ -138,25 +143,33 @@ export default function AdminSidebar({user}:{user:User}) {
                   <SidebarMenuButton size="lg">
                     <Avatar className="h-8 w-8">
                       <AvatarImage src="/placeholder-avatar.jpg" alt="Admin" />
-                      <AvatarFallback>{user.name?.slice(0,2)?.toUpperCase()}</AvatarFallback>
+                      <AvatarFallback>
+                        {user.name?.slice(0, 2)?.toUpperCase()}
+                      </AvatarFallback>
                     </Avatar>
                     <div className="flex flex-col gap-0.5 leading-none">
                       <span className="font-semibold">{user.name}</span>
-                      <span className="text-xs text-muted-foreground">{user.email}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {user.email}
+                      </span>
                     </div>
                     <ChevronUp className="ml-auto h-4 w-4" />
                   </SidebarMenuButton>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent 
-                  side="top" 
+                <DropdownMenuContent
+                  side="top"
                   align="start"
                   className="w-[--radix-popper-anchor-width]"
                 >
-                  <DropdownMenuItem onClick={() => router.push("/admin/profile")}>
+                  <DropdownMenuItem
+                    onClick={() => router.push("/admin/profile")}
+                  >
                     <User2 className="mr-2 h-4 w-4" />
                     Profile
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => router.push("/admin/settings")}>
+                  <DropdownMenuItem
+                    onClick={() => router.push("/admin/settings")}
+                  >
                     <Settings className="mr-2 h-4 w-4" />
                     Settings
                   </DropdownMenuItem>
@@ -173,5 +186,5 @@ export default function AdminSidebar({user}:{user:User}) {
         <SidebarRail />
       </Sidebar>
     </TooltipProvider>
-  )
+  );
 }

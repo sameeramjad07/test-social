@@ -366,6 +366,10 @@ export const postsRouter = createTRPCRouter({
         },
         select: {
           id: true,
+          workspaceId: true,
+          createdAt: true,
+          updatedAt: true,
+          createdById: true,
           content: true,
           caption: true,
           hashtags: true,
@@ -373,11 +377,11 @@ export const postsRouter = createTRPCRouter({
           status: true,
           scheduledAt: true,
           publishedAt: true,
-          createdAt: true,
           contentApproved: true,
           imagesApproved: true,
           aiPrompt: true,
           aiModel: true,
+          scheduleId: true,
           socialAccounts: {
             select: {
               id: true,
@@ -404,12 +408,6 @@ export const postsRouter = createTRPCRouter({
               platformPostId: true,
               errorMessage: true,
               metrics: true,
-            },
-          },
-          schedule: {
-            select: {
-              id: true,
-              name: true,
             },
           },
         },
@@ -524,6 +522,7 @@ export const postsRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const { scheduleId, workspaceId, prompt } = input;
 
+      // Ensure user ID is defined
       if (!ctx.session.user.id) {
         throw new TRPCError({
           code: "UNAUTHORIZED",
@@ -595,158 +594,260 @@ export const postsRouter = createTRPCRouter({
         });
       }
 
-      const socialAccounts = await ctx.db.socialAccount.findMany({
-        where: {
-          workspaceId,
-          platform: { in: schedule.platforms },
-          isActive: true,
-        },
-        select: { id: true },
-      });
-
-      const dates = [];
-      let current = new Date(schedule.startDate);
-      const end = schedule.endDate
-        ? new Date(schedule.endDate)
-        : new Date(current.getTime() + 30 * 24 * 60 * 60 * 1000);
-      while (current <= end) {
-        let include = false;
-        const dayOfWeek = current.getDay();
-        const dayOfMonth = current.getDate();
-        switch (schedule.frequency) {
-          case "DAILY":
-            include = true;
-            break;
-          case "WEEKLY":
-            if (schedule.weekDays.includes(dayOfWeek)) {
+      // Step 1: Generate empty posts and initialize progress
+      await ctx.db.$transaction(async (tx) => {
+        const dates = [];
+        let current = new Date(schedule.startDate);
+        const end = schedule.endDate
+          ? new Date(schedule.endDate)
+          : new Date(current.getTime() + 30 * 24 * 60 * 60 * 1000);
+        while (current <= end) {
+          let include = false;
+          const dayOfWeek = current.getDay();
+          const dayOfMonth = current.getDate();
+          switch (schedule.frequency) {
+            case "DAILY":
               include = true;
-            }
-            break;
-          case "MONTHLY":
-            if (schedule.monthDays.includes(dayOfMonth)) {
-              include = true;
-            }
-            break;
-          case "CUSTOM":
-            if (
-              schedule.weekDays.includes(dayOfWeek) ||
-              schedule.monthDays.includes(dayOfMonth)
-            ) {
-              include = true;
-            }
-            break;
-          default:
-            include = false;
+              break;
+            case "WEEKLY":
+              if (schedule.weekDays?.includes(dayOfWeek)) include = true;
+              break;
+            case "MONTHLY":
+              if (schedule.monthDays?.includes(dayOfMonth)) include = true;
+              break;
+            case "CUSTOM":
+              if (
+                schedule.weekDays?.includes(dayOfWeek) ||
+                schedule.monthDays?.includes(dayOfMonth)
+              )
+                include = true;
+              break;
+          }
+          if (include) dates.push(new Date(current));
+          current.setDate(current.getDate() + 1);
         }
-        if (include) {
-          dates.push(new Date(current));
-        }
-        current.setDate(current.getDate() + 1);
-      }
 
-      const totalPosts =
-        schedule.postsPerSlot * schedule.timeSlots.length * dates.length;
+        const totalPosts =
+          schedule.postsPerSlot * schedule.timeSlots.length * dates.length;
 
-      // Initialize or update progress
-      const existingProgress = await ctx.db.postGenerationProgress.findUnique({
-        where: { scheduleId },
-      });
-      if (existingProgress) {
-        await ctx.db.postGenerationProgress.update({
+        await tx.postGenerationProgress.upsert({
           where: { scheduleId },
-          data: { total: totalPosts, completed: 0 },
+          create: { scheduleId, total: totalPosts, completed: 0 },
+          update: { total: totalPosts, completed: 0 },
         });
-      } else {
-        await ctx.db.postGenerationProgress.create({
-          data: { scheduleId, total: totalPosts, completed: 0 },
+
+        const socialAccounts = await tx.socialAccount.findMany({
+          where: {
+            workspaceId,
+            platform: { in: schedule.platforms },
+            isActive: true,
+          },
+          select: { id: true },
         });
-      }
+
+        for (const date of dates) {
+          for (const timeSlot of schedule.timeSlots) {
+            const [hh, mm] = timeSlot.split(":").map(Number);
+            if (
+              hh === undefined ||
+              mm === undefined ||
+              isNaN(hh) ||
+              isNaN(mm)
+            ) {
+              throw new TRPCError({
+                code: "BAD_REQUEST",
+                message: `Invalid time slot format: ${timeSlot}`,
+              });
+            }
+            const scheduledAt = new Date(date);
+            scheduledAt.setHours(hh, mm, 0, 0);
+
+            for (let i = 0; i < schedule.postsPerSlot; i++) {
+              await tx.post.create({
+                data: {
+                  workspaceId,
+                  createdById: ctx.session.user.id!, // Non-null assertion since validated earlier
+                  content: "",
+                  caption: null,
+                  hashtags: [],
+                  mentions: [],
+                  status: PostStatus.DRAFT,
+                  contentApproved: false,
+                  imagesApproved: false,
+                  scheduledAt,
+                  aiPrompt: prompt,
+                  aiModel: null,
+                  socialAccounts: {
+                    connect: socialAccounts.map(({ id }) => ({ id })),
+                  },
+                  scheduleId,
+                },
+              });
+            }
+          }
+        }
+      });
+
+      // Step 2: Fetch all posts and process them
+      const posts = await ctx.db.post.findMany({
+        where: { scheduleId },
+        orderBy: { scheduledAt: "asc" },
+        include: { images: true },
+      });
 
       let completed = 0;
-      for (const date of dates) {
-        for (const timeSlot of schedule.timeSlots) {
-          const [hh, mm] = timeSlot.split(":").map(Number);
-          if (hh === undefined || mm === undefined || isNaN(hh) || isNaN(mm)) {
-            throw new TRPCError({
-              code: "BAD_REQUEST",
-              message: `Invalid time slot format: ${timeSlot}`,
-            });
-          }
-          const scheduledAt = new Date(date);
-          scheduledAt.setHours(hh, mm, 0, 0);
-
-          for (let i = 0; i < schedule.postsPerSlot; i++) {
-            // Generate content
-            const contentResponse = await openai.chat.completions.create({
-              model: "gpt-4o-mini",
-              messages: [
-                {
-                  role: "system",
-                  content: "You are an expert social media content creator.",
+      for (const post of posts) {
+        // Generate content
+        const contentResponse = await openai.chat.completions.create({
+          model: "gpt-4o-mini",
+          messages: [
+            {
+              role: "system" as const,
+              content:
+                "You are an expert social media content creator. Create unique content for each post based on the general prompt, avoiding repetition from previous posts. Use the previous post's content as context to ensure variety.",
+            },
+            {
+              role: "user" as const,
+              content: prompt,
+            },
+            ...(
+              await ctx.db.post.findMany({
+                where: {
+                  scheduleId,
+                  id: { not: post.id },
+                  content: { not: { equals: "" } }, // Fixed filter syntax
                 },
-                { role: "user", content: prompt },
-              ],
-            });
-            const content =
-              contentResponse.choices[0]?.message?.content ||
-              "Default content generated";
+                orderBy: { scheduledAt: "asc" },
+                select: { content: true },
+              })
+            ).map((p) => ({
+              role: "assistant" as const,
+              content: `Previous post content: ${p.content}`,
+            })),
+          ],
+        });
+        const content =
+          contentResponse.choices[0]?.message?.content ||
+          "Default unique content";
+        await ctx.db.post.update({
+          where: { id: post.id },
+          data: {
+            content,
+            status: PostStatus.CONTENT_PENDING_APPROVAL,
+            contentApproved: false,
+            aiModel: "gpt-4o-mini",
+          },
+        });
 
-            // Generate image
-            const imageResponse = await openai.images.generate({
-              model: "dall-e-3",
-              prompt: prompt,
-              n: 1,
-              size: "1024x1024",
-            });
+        // Generate image
+        const imageResponse = await openai.images.generate({
+          model: "dall-e-3",
+          prompt: `${prompt} - Create a unique image distinct from previous posts, considering the content: ${content}`,
+          n: 1,
+          size: "1024x1024",
+        });
 
-            if (!imageResponse.data || imageResponse.data.length === 0) {
-              throw new TRPCError({
-                code: "INTERNAL_SERVER_ERROR",
-                message: "Failed to generate image: no data returned",
-              });
-            }
+        if (!imageResponse.data || !imageResponse.data[0]) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Failed to generate image: No data returned",
+          });
+        }
 
-            const imageUrl = imageResponse.data[0]?.url;
-
-            if (!imageUrl) {
-              throw new TRPCError({
-                code: "INTERNAL_SERVER_ERROR",
-                message: "Failed to generate image",
-              });
-            }
-
-            // Create post
-            const post = await ctx.db.post.create({
+        const imageUrl = imageResponse.data[0]?.url;
+        if (imageUrl) {
+          // Check if an image already exists for this post
+          const existingImage = await ctx.db.postImage.findFirst({
+            where: { postId: post.id },
+          });
+          if (existingImage) {
+            await ctx.db.postImage.update({
+              where: { id: existingImage.id },
               data: {
-                workspaceId,
-                createdById: ctx.session.user.id,
-                content,
-                status: PostStatus.CONTENT_PENDING_APPROVAL,
-                scheduledAt,
+                url: imageUrl,
                 aiPrompt: prompt,
-                aiModel: "gpt-4o-mini",
-                scheduleId,
-                socialAccounts: {
-                  connect: socialAccounts.map(({ id }) => ({ id })),
-                },
-                images: {
-                  create: {
-                    url: imageUrl,
-                    aiPrompt: prompt,
-                    isApproved: false,
-                    order: 0,
-                  },
-                },
+                isApproved: false,
               },
             });
-
-            completed++;
-            await ctx.db.postGenerationProgress.update({
-              where: { scheduleId },
-              data: { completed },
+          } else {
+            await ctx.db.postImage.create({
+              data: {
+                postId: post.id,
+                url: imageUrl,
+                alt: null,
+                width: null,
+                height: null,
+                size: null,
+                mimeType: null,
+                aiPrompt: prompt,
+                isApproved: false,
+                order: 0,
+              },
             });
           }
+          await ctx.db.post.update({
+            where: { id: post.id },
+            data: { status: PostStatus.IMAGE_PENDING_APPROVAL },
+          });
         }
+
+        // Generate hashtags
+        const hashtagResponse = await openai.chat.completions.create({
+          model: "gpt-4o-mini",
+          messages: [
+            {
+              role: "system" as const,
+              content:
+                "Generate 3-5 unique, relevant hashtags for this social media post, avoiding repetition from previous posts.",
+            },
+            {
+              role: "user" as const,
+              content: `Content: ${content}, Prompt: ${prompt}`,
+            },
+            ...(
+              await ctx.db.post.findMany({
+                where: {
+                  scheduleId,
+                  id: { not: post.id },
+                  hashtags: { isEmpty: false }, // Updated filter
+                },
+                orderBy: { scheduledAt: "asc" },
+                select: { hashtags: true },
+              })
+            )
+              .filter((p) => p.hashtags.length > 0)
+              .map((p) => ({
+                role: "assistant" as const,
+                content: `Previous hashtags: ${p.hashtags.join(", ")}`,
+              })),
+          ],
+        });
+        const hashtags =
+          hashtagResponse.choices[0]?.message?.content
+            ?.split(",")
+            .map((h) => h.trim())
+            .filter((h) => h.startsWith("#") && h.length > 1)
+            .slice(0, 5) || [];
+        await ctx.db.post.update({
+          where: { id: post.id },
+          data: { hashtags },
+        });
+
+        // Approve content and image to move to APPROVED status
+        await ctx.db.post.update({
+          where: { id: post.id },
+          data: {
+            contentApproved: true,
+            imagesApproved: true,
+            status: PostStatus.APPROVED,
+          },
+        });
+
+        completed++;
+        await ctx.db.postGenerationProgress.update({
+          where: { scheduleId },
+          data: { completed },
+        });
       }
 
       await ctx.db.postSchedule.update({
@@ -757,6 +858,113 @@ export const postsRouter = createTRPCRouter({
       return { success: true };
     }),
 
+  generateHashtags: protectedProcedure
+    .input(z.object({ postId: z.string(), prompt: z.string().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      const { postId, prompt } = input;
+
+      const post = await ctx.db.post.findUnique({
+        where: { id: postId },
+        include: { schedule: true },
+      });
+
+      if (!post) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Post not found",
+        });
+      }
+
+      // Check permissions
+      const member = await ctx.db.workspaceMember.findFirst({
+        where: {
+          workspaceId: post.workspaceId,
+          userId: ctx.session.user.id,
+        },
+        include: {
+          role: {
+            include: {
+              permissions: {
+                include: { permission: true },
+              },
+            },
+          },
+        },
+      });
+
+      if (!member) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You are not a member of this workspace",
+        });
+      }
+
+      const hasPermission =
+        member.role.name === "owner" ||
+        member.role.permissions.some(
+          (rp) =>
+            rp.permission.resource === "posts" &&
+            rp.permission.action === "update"
+        );
+
+      if (!hasPermission) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You don't have permission to update posts",
+        });
+      }
+
+      if (post.status !== PostStatus.CONTENT_APPROVED) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Content must be approved before generating hashtags",
+        });
+      }
+
+      const relatedPosts = await ctx.db.post.findMany({
+        where: { scheduleId: post.scheduleId, id: { not: postId } },
+        select: { hashtags: true },
+      });
+
+      const messages = [
+        {
+          role: "system" as const,
+          content:
+            "Generate 3-5 unique, relevant hashtags for this social media post, avoiding repetition from previous posts.",
+        },
+        {
+          role: "user" as const,
+          content: `Content: ${post.content}, Prompt: ${
+            prompt || post.aiPrompt || post.schedule?.contentPrompt || ""
+          }`,
+        },
+        ...relatedPosts
+          .filter((p) => p.hashtags.length > 0)
+          .map((p) => ({
+            role: "assistant" as const,
+            content: `Previous hashtags: ${p.hashtags.join(", ")}`,
+          })),
+      ];
+
+      const hashtagResponse = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages,
+      });
+
+      const hashtags =
+        hashtagResponse.choices[0]?.message?.content
+          ?.split(",")
+          .map((h) => h.trim())
+          .filter((h) => h.startsWith("#") && h.length > 1)
+          .slice(0, 5) || [];
+
+      await ctx.db.post.update({
+        where: { id: postId },
+        data: { hashtags },
+      });
+
+      return { success: true, hashtags };
+    }),
   getGenerationProgress: protectedProcedure
     .input(z.object({ scheduleId: z.string() }))
     .query(async ({ ctx, input }) => {

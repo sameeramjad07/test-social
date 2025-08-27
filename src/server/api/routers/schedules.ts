@@ -153,6 +153,108 @@ export const schedulesRouter = createTRPCRouter({
       }));
     }),
 
+  activeList: protectedProcedure
+    .input(
+      z.object({ workspaceId: z.string(), isActive: z.boolean().optional() })
+    )
+    .query(async ({ ctx, input }) => {
+      const member = await ctx.db.workspaceMember.findFirst({
+        where: {
+          workspaceId: input.workspaceId,
+          userId: ctx.session.user.id,
+        },
+        include: {
+          role: {
+            include: {
+              permissions: {
+                include: { permission: true },
+              },
+            },
+          },
+        },
+      });
+
+      if (!member) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You are not a member of this workspace",
+        });
+      }
+
+      const hasPermission =
+        member.role.name === "owner" ||
+        member.role.permissions.some(
+          (rp) =>
+            rp.permission.resource === "schedules" &&
+            rp.permission.action === "read"
+        );
+
+      if (!hasPermission) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You don't have permission to view schedules",
+        });
+      }
+
+      const schedules = await ctx.db.postSchedule.findMany({
+        where: {
+          workspaceId: input.workspaceId,
+          isActive: input.isActive,
+        },
+        select: {
+          id: true,
+          workspaceId: true,
+          name: true,
+          description: true,
+          createdAt: true,
+          updatedAt: true,
+          isActive: true,
+          hashtags: true,
+          startDate: true,
+          endDate: true,
+          frequency: true, // Keep as ScheduleFrequency
+          weekDays: true,
+          monthDays: true,
+          timeSlots: true,
+          platforms: true,
+          postsPerSlot: true,
+          contentPrompt: true,
+          imagePrompt: true,
+          lastGeneratedAt: true,
+          posts: {
+            select: {
+              id: true,
+              status: true,
+            },
+          },
+        },
+      });
+
+      return schedules.map((schedule) => ({
+        id: schedule.id,
+        workspaceId: schedule.workspaceId,
+        name: schedule.name,
+        description: schedule.description,
+        createdAt: schedule.createdAt,
+        updatedAt: schedule.updatedAt,
+        isActive: schedule.isActive,
+        hashtags: schedule.hashtags,
+        startDate: schedule.startDate,
+        endDate: schedule.endDate,
+        frequency: schedule.frequency, // Use the enum value directly
+        weekDays: schedule.weekDays,
+        monthDays: schedule.monthDays,
+        timeSlots: schedule.timeSlots,
+        platforms: schedule.platforms,
+        postsPerSlot: schedule.postsPerSlot,
+        contentPrompt: schedule.contentPrompt,
+        imagePrompt: schedule.imagePrompt,
+        lastGeneratedAt: schedule.lastGeneratedAt,
+        postsGenerated: schedule.posts.length,
+        totalPosts: schedule.postsPerSlot * schedule.timeSlots.length,
+      }));
+    }),
+
   getSchedule: protectedProcedure
     .input(z.object({ scheduleId: z.string(), workspaceId: z.string() }))
     .query(async ({ ctx, input }) => {
@@ -404,8 +506,27 @@ export const schedulesRouter = createTRPCRouter({
         });
       }
 
-      await ctx.db.postSchedule.delete({
-        where: { id: scheduleId },
+      // Start a transaction to ensure all deletes are atomic
+      await ctx.db.$transaction(async (tx) => {
+        // Delete related PostGenerationJobs
+        await tx.postGenerationJob.deleteMany({
+          where: { scheduleId },
+        });
+
+        // Delete related PostGenerationProgress
+        await tx.postGenerationProgress.deleteMany({
+          where: { scheduleId },
+        });
+
+        // Delete related Posts
+        await tx.post.deleteMany({
+          where: { scheduleId },
+        });
+
+        // Delete the PostSchedule
+        await tx.postSchedule.delete({
+          where: { id: scheduleId },
+        });
       });
 
       return { success: true };

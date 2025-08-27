@@ -23,7 +23,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Instagram, Facebook, Linkedin, Sparkles, Plus } from "lucide-react";
+import {
+  Instagram,
+  Facebook,
+  Linkedin,
+  Sparkles,
+  Plus,
+  Trash,
+} from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import Link from "next/link";
@@ -140,6 +147,15 @@ export function ScheduleCreationDialog({
       newTimeSlots[index] = value;
       return { ...prev, timeSlots: newTimeSlots };
     });
+  };
+
+  const handleRemoveTimeSlot = (index: number) => {
+    if (newSchedule.timeSlots.length > 1) {
+      setNewSchedule((prev) => ({
+        ...prev,
+        timeSlots: prev.timeSlots.filter((_, i) => i !== index),
+      }));
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -370,14 +386,27 @@ export function ScheduleCreationDialog({
             <div className="space-y-1">
               <Label className="text-sm">Time Slots *</Label>
               {newSchedule.timeSlots.map((slot, index) => (
-                <Input
-                  key={index}
-                  type="time"
-                  value={slot}
-                  onChange={(e) => handleTimeSlotChange(index, e.target.value)}
-                  className="mb-1 text-sm"
-                  required
-                />
+                <div key={index} className="flex items-center gap-2 mb-1">
+                  <Input
+                    type="time"
+                    value={slot}
+                    onChange={(e) =>
+                      handleTimeSlotChange(index, e.target.value)
+                    }
+                    className="mb-0 text-sm flex-1"
+                    required
+                  />
+                  {newSchedule.timeSlots.length > 1 && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleRemoveTimeSlot(index)}
+                      className="h-9"
+                    >
+                      <Trash className="w-4 h-4 text-red-600" />
+                    </Button>
+                  )}
+                </div>
               ))}
               <Button
                 variant="outline"

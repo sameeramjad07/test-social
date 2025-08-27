@@ -1,20 +1,19 @@
-// src/components/calendar/calendar-day.tsx
 "use client";
 
 import { motion } from "framer-motion";
 import { Badge } from "@/components/ui/badge";
 import { PostEntry } from "./post-entry";
-import type { Post } from "@prisma/client";
+import type { Post, PostSchedule } from "@prisma/client";
 
 interface CalendarDayProps {
   date: Date;
-  posts: any[];
-  schedules: any[];
+  posts: Post[];
+  schedules: PostSchedule[];
   isToday: boolean;
   isSelected: boolean;
   onDateClick: (date: Date) => void;
-  onPostClick: (post: any) => void;
-  onScheduleClick: (schedule: any) => void;
+  onPostClick: (post: Post) => void;
+  onScheduleClick: (schedule: PostSchedule) => void;
 }
 
 export function CalendarDay({
@@ -27,20 +26,10 @@ export function CalendarDay({
   onPostClick,
   onScheduleClick,
 }: CalendarDayProps) {
-  // Group posts by schedule
-  const postsBySchedule = posts.reduce<Record<string, Post[]>>((acc, post) => {
-    const key = post.scheduleId || "individual";
-    if (!acc[key]) {
-      acc[key] = [];
-    }
-    acc[key].push(post);
-    return acc;
-  }, {});
-
   return (
     <motion.div
       whileHover={{ scale: 1.02 }}
-      className={`p-2 h-32 border rounded-lg cursor-pointer transition-all overflow-hidden ${
+      className={`p-2 h-32 border rounded-lg cursor-pointer transition-all overflow-y-auto ${
         isToday
           ? "bg-blue-50 border-blue-200 dark:bg-blue-950 dark:border-blue-800"
           : isSelected
@@ -62,41 +51,20 @@ export function CalendarDay({
         )}
       </div>
 
-      <div className="space-y-1 overflow-y-auto max-h-20">
-        {Object.entries(postsBySchedule).map(([scheduleKey, schedulePosts]) => {
-          if (scheduleKey === "individual") {
-            // Show individual posts
-            return schedulePosts.map((post: Post) => (
-              <PostEntry
-                key={post.id}
-                post={post}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onPostClick(post);
-                }}
-              />
-            ));
-          } else {
-            // Show schedule entries
-            const schedule = schedules.find((s) => s.id === scheduleKey);
-            if (!schedule) return null;
-
-            return (
-              <div
-                key={scheduleKey}
-                className="text-xs p-1 rounded bg-gradient-to-r from-purple-500 to-pink-500 text-white cursor-pointer hover:from-purple-600 hover:to-pink-600 transition-colors"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onScheduleClick(schedule);
-                }}
-              >
-                <div className="font-medium truncate">{schedule.name}</div>
-                <div className="text-xs opacity-90">
-                  {schedulePosts.length} posts
-                </div>
-              </div>
-            );
-          }
+      <div className="space-y-1">
+        {posts.map((post) => {
+          const schedule = schedules.find((s) => s.id === post.scheduleId);
+          return (
+            <PostEntry
+              key={post.id}
+              post={post}
+              onClick={(e) => {
+                e.stopPropagation();
+                onPostClick(post);
+              }}
+              scheduleName={schedule?.name}
+            />
+          );
         })}
       </div>
     </motion.div>

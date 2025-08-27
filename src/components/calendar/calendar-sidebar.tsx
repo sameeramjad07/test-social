@@ -1,4 +1,3 @@
-// src/components/calendar/calendar-sidebar.tsx
 "use client";
 
 import {
@@ -76,8 +75,8 @@ export function CalendarSidebar({
           <div className="space-y-3">
             {todaysPosts.map((post) => {
               const platform = platforms.find((p) =>
-                post.socialAccounts.some(
-                  (account) => account.platform === p.name
+                post.socialAccounts?.some(
+                  (account: { platform: string }) => account.platform === p.name
                 )
               );
               return (
@@ -155,7 +154,7 @@ export function CalendarSidebar({
       {/* Active Schedules */}
       <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm dark:bg-slate-900/80">
         <CardHeader>
-          <CardTitle className="text-lg">Active Schedules</CardTitle>
+          <CardTitle className="text-lg">Post Schedules</CardTitle>
           <CardDescription>Your content schedules</CardDescription>
         </CardHeader>
         <CardContent>

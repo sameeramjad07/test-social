@@ -28,6 +28,7 @@ model Workspace {
     schedules       PostSchedule[]
     templates       PostTemplate[]
     roles           Role[]
+    aiGenerations   AIGenerationLog[] // Added relation
     
     @@index([slug])
     @@map("workspaces")
@@ -116,6 +117,7 @@ model User {
     workspaces      WorkspaceMember[]
     createdPosts    Post[]
     approvals       PostApproval[]
+    aiGenerations AIGenerationLog[] // Added relation
     
     @@map("users")
 }
@@ -192,6 +194,7 @@ model Post {
     publications    PostPublication[]
     schedule        PostSchedule?     @relation(fields: [scheduleId], references: [id])
     scheduleId      String?           @map("schedule_id")
+    aiGenerations   AIGenerationLog[] // Added relation
     
     @@index([workspaceId, status])
     @@index([scheduledAt])
@@ -226,10 +229,14 @@ model PostImage {
     isApproved  Boolean  @default(false) @map("is_approved")
     order       Int      @default(0)
     createdAt   DateTime @default(now()) @map("created_at")
+    aiGenerationId String? @unique @map("ai_generation_id") // Link to AI generation log
+
+  aiGeneration AIGenerationLog? @relation("AIGenerationToImage")
     
     post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
     
     @@index([postId])
+    @@index([aiGenerationId]) // Added index
     @@map("post_images")
 }
 
@@ -344,6 +351,7 @@ model PostSchedule {
 
     progress          PostGenerationProgress?  @relation("ScheduleProgress")
     jobs              PostGenerationJob[]      @relation("ScheduleJobs")
+    aiGenerations     AIGenerationLog[]
     
     @@index([workspaceId, isActive])
     @@map("post_schedules")
@@ -376,6 +384,51 @@ model PostTemplate {
     @@map("post_templates")
 }
 
+// ========== NEW AI LOGS MODEL ==========
+
+enum AIGenerationType { 
+    TEXT
+    IMAGE 
+}
+
+enum AIGenerationStatus { 
+    PROCESSING 
+    COMPLETED 
+    FAILED 
+}
+
+model AIGenerationLog {
+  id          String             @id @default(cuid())
+  userId      String             @map("user_id")
+  workspaceId String             @map("workspace_id")
+  postId      String?            @map("post_id")
+  scheduleId  String?            @map("schedule_id")
+  type        AIGenerationType
+  prompt      String             @db.Text
+  model       String
+  tokens      Int?
+  imageSize   String?
+  duration    Float
+  status      AIGenerationStatus @default(PROCESSING)
+  cost        Float              @default(0)
+  createdAt   DateTime           @default(now()) @map("created_at")
+  updatedAt   DateTime           @updatedAt @map("updated_at")
+  imageId     String?            @unique @map("image_id")
+
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  post      Post?       @relation(fields: [postId], references: [id], onDelete: Cascade)
+  schedule  PostSchedule? @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  image     PostImage?  @relation("AIGenerationToImage", fields: [imageId], references: [id])
+
+  @@index([userId])
+  @@index([workspaceId])
+  @@index([postId])
+  @@index([scheduleId])
+  @@index([imageId])
+  @@index([createdAt])
+  @@map("ai_generation_logs")
+}
 // ========== NEXT-AUTH MODELS ==========
 
 model Account {

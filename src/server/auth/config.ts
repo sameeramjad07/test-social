@@ -21,6 +21,7 @@ declare module "next-auth" {
       name?: string | null;
       email?: string | null;
       image?: string | null;
+      isSuperAdmin?: boolean;
       workspaces?: Workspace[];
       // ...other properties
       // role: UserRole;
@@ -32,10 +33,12 @@ declare module "next-auth" {
     name?: string | null;
     email?: string | null;
     image?: string | null;
+    isSuperAdmin?: boolean;
     workspaces?: Workspace[];
   }
   interface JWT {
     id?: string;
+    isSuperAdmin?: boolean;
   }
 }
 
@@ -86,6 +89,7 @@ export const authConfig: NextAuthConfig = {
               email: true,
               image: true,
               hashedPassword: true,
+              isSuperAdmin: true,
               workspaces: {
                 select: {
                   workspace: true,
@@ -115,6 +119,7 @@ export const authConfig: NextAuthConfig = {
             name: user.name,
             email: user.email,
             image: user.image,
+            isSuperAdmin: user.isSuperAdmin,
             workspaces: workspaces,
           };
         } catch (error) {
@@ -137,6 +142,7 @@ export const authConfig: NextAuthConfig = {
     jwt({ token, user }) {
       if (user) {
         token.id = user.id;
+        token.isSuperAdmin = user.isSuperAdmin;
       }
       return token;
     },
@@ -145,6 +151,7 @@ export const authConfig: NextAuthConfig = {
         session.user = {
           ...session.user,
           id: token.id as string,
+          isSuperAdmin: token.isSuperAdmin as boolean,
         };
       }
       if (token?.id) {
@@ -158,6 +165,7 @@ export const authConfig: NextAuthConfig = {
             email: true,
             image: true,
             hashedPassword: true,
+            isSuperAdmin: true,
             workspaces: {
               select: {
                 workspace: true,
@@ -180,6 +188,7 @@ export const authConfig: NextAuthConfig = {
             name: user.name ?? "",
             email: user.email ?? "",
             image: user.image ?? "",
+            isSuperAdmin: user.isSuperAdmin,
             workspaces: workspaces,
           };
         }
