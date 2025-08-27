@@ -203,10 +203,12 @@ export function Navbar() {
                 <DropdownMenuContent align="end" className="w-56">
                   <DropdownMenuLabel>My Account</DropdownMenuLabel>
                   <DropdownMenuSeparator />
-                  {/* <DropdownMenuItem onClick={() => router.push("/profile")}>
-                    <User className="mr-2 h-4 w-4" />
-                    Profile
-                  </DropdownMenuItem> */}
+                  {session.user.isSuperAdmin && (
+                    <DropdownMenuItem onClick={() => router.push("/admin")}>
+                      <BarChart3 className="mr-2 h-4 w-4" />
+                      Admin Dashboard
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuItem onClick={() => router.push("/workspace")}>
                     <SwitchCamera className="mr-2 h-4 w-4" />
                     Manage Workspaces
@@ -329,10 +331,26 @@ export function Navbar() {
                         </Link>
                       </motion.div>
                     ))}
+                    {session.user.isSuperAdmin && (
+                      <motion.div
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: 0.3 }}
+                      >
+                        <Link
+                          href="/admin"
+                          onClick={() => setIsOpen(false)}
+                          className="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all"
+                        >
+                          <BarChart3 className="w-5 h-5" />
+                          Admin Dashboard
+                        </Link>
+                      </motion.div>
+                    )}
                     <motion.div
                       initial={{ opacity: 0, x: -20 }}
                       animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: 0.3 }}
+                      transition={{ delay: 0.4 }}
                     >
                       <Button
                         onClick={handleSignOut}
