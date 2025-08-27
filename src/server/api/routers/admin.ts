@@ -73,6 +73,67 @@ const saveSettingsSchema = z.object({
   }),
 });
 
+const AIGenerationSchema = z.object({
+  id: z.string(),
+  user: z.object({
+    name: z.string().nullable(),
+    email: z.string().nullable(),
+    avatar: z.string().nullable(), // Changed from optional() to nullable() to allow null
+  }),
+  workspace: z.object({
+    name: z.string(),
+    id: z.string(),
+  }),
+  type: z.enum(["TEXT", "IMAGE"]), // Matches AIGenerationType enum values
+  prompt: z.string(),
+  model: z.string(),
+  tokens: z.number().nullable(), // Changed to nullable to match Prisma
+  imageSize: z.string().nullable(), // Changed to nullable to match Prisma
+  duration: z.number(),
+  status: z.enum(["PROCESSING", "COMPLETED", "FAILED"]), // Matches AIGenerationStatus enum values
+  cost: z.number(),
+  createdAt: z.string(),
+});
+
+// Helper to convert logs to CSV (unchanged)
+function logsToCsv(logs: any[]): string {
+  const headers = [
+    "ID",
+    "User Name",
+    "User Email",
+    "Workspace Name",
+    "Type",
+    "Model",
+    "Prompt",
+    "Tokens",
+    "Image Size",
+    "Duration (s)",
+    "Cost ($)",
+    "Status",
+    "Created At",
+  ];
+  let csv = headers.join(",") + "\n";
+  for (const log of logs) {
+    const row = [
+      log.id,
+      log.user.name || "Unknown",
+      log.user.email || "N/A",
+      log.workspace.name,
+      log.type,
+      log.model,
+      `"${log.prompt.replace(/"/g, '""')}"`,
+      log.tokens || "",
+      log.imageSize || "",
+      log.duration,
+      log.cost,
+      log.status,
+      log.createdAt,
+    ];
+    csv += row.join(",") + "\n";
+  }
+  return csv;
+}
+
 export const adminRouter = createTRPCRouter({
   // Get dashboard statistics (previous procedures unchanged)
   getDashboardStats: protectedProcedure.query(async ({ ctx }) => {
@@ -238,6 +299,77 @@ export const adminRouter = createTRPCRouter({
 
     return days;
   }),
+
+  // Updated procedures for AI logs
+  getAILogs: protectedProcedure
+    .output(z.array(AIGenerationSchema))
+    .query(async ({ ctx }) => {
+      const logs = await ctx.db.aIGenerationLog.findMany({
+        include: {
+          user: { select: { name: true, email: true, image: true } },
+          workspace: { select: { id: true, name: true } },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+
+      return logs.map((log) => ({
+        id: log.id,
+        user: {
+          name: log.user.name || "Unknown",
+          email: log.user.email || "N/A",
+          avatar: log.user.image, // image is string | null, matches nullable schema
+        },
+        workspace: {
+          id: log.workspace.id,
+          name: log.workspace.name,
+        },
+        type: log.type, // Prisma returns "TEXT" | "IMAGE"
+        prompt: log.prompt,
+        model: log.model,
+        tokens: log.tokens,
+        imageSize: log.imageSize,
+        duration: log.duration,
+        status: log.status, // Prisma returns "PROCESSING" | "COMPLETED" | "FAILED"
+        cost: log.cost,
+        createdAt: log.createdAt.toISOString(),
+      }));
+    }),
+
+  exportAILogs: protectedProcedure
+    .output(z.string())
+    .mutation(async ({ ctx }) => {
+      const logs = await ctx.db.aIGenerationLog.findMany({
+        include: {
+          user: { select: { name: true, email: true, image: true } },
+          workspace: { select: { id: true, name: true } },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+
+      const mappedLogs = logs.map((log) => ({
+        id: log.id,
+        user: {
+          name: log.user.name || "Unknown",
+          email: log.user.email || "N/A",
+          avatar: log.user.image,
+        },
+        workspace: {
+          id: log.workspace.id,
+          name: log.workspace.name,
+        },
+        type: log.type,
+        prompt: log.prompt,
+        model: log.model,
+        tokens: log.tokens,
+        imageSize: log.imageSize,
+        duration: log.duration,
+        status: log.status,
+        cost: log.cost,
+        createdAt: log.createdAt.toISOString(),
+      }));
+
+      return logsToCsv(mappedLogs);
+    }),
 
   // Get generation type distribution (previous procedure unchanged)
   getGenerationTypes: protectedProcedure.query(async ({ ctx }) => {
