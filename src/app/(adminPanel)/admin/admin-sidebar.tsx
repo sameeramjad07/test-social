@@ -88,12 +88,16 @@ export default function AdminSidebar({ user }: { user: User }) {
         <SidebarHeader>
           <SidebarMenu>
             <SidebarMenuItem>
-              <SidebarMenuButton size="lg" asChild>
-                <a href="/admin" className="flex items-center gap-2">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
+              <SidebarMenuButton
+                size="lg"
+                asChild
+                className="flex items-center gap-2 data-[state=collapsed]:justify-center"
+              >
+                <a href="/admin">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary shrink-0">
                     <Brain className="h-5 w-5 text-primary-foreground" />
                   </div>
-                  <div className="flex flex-col gap-0.5 leading-none">
+                  <div className="flex flex-col gap-0.5 leading-none transition-opacity duration-200 ease-in-out data-[state=collapsed]:opacity-0 data-[state=collapsed]:w-0 data-[state=collapsed]:overflow-hidden">
                     <span className="font-semibold">Super Admin</span>
                     <span className="text-xs text-muted-foreground">
                       Control Panel
@@ -123,7 +127,7 @@ export default function AdminSidebar({ user }: { user: User }) {
                       </TooltipTrigger>
                       <TooltipContent
                         side="right"
-                        className="flex items-center gap-4"
+                        className="flex items-center gap-4 data-[state=collapsed]:block"
                       >
                         {item.name}
                       </TooltipContent>
@@ -140,20 +144,23 @@ export default function AdminSidebar({ user }: { user: User }) {
             <SidebarMenuItem>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <SidebarMenuButton size="lg">
+                  <SidebarMenuButton
+                    size="lg"
+                    className="data-[state=collapsed]:justify-center"
+                  >
                     <Avatar className="h-8 w-8">
                       <AvatarImage src="/placeholder-avatar.jpg" alt="Admin" />
                       <AvatarFallback>
                         {user.name?.slice(0, 2)?.toUpperCase()}
                       </AvatarFallback>
                     </Avatar>
-                    <div className="flex flex-col gap-0.5 leading-none">
+                    <div className="flex flex-col gap-0.5 leading-none transition-opacity duration-200 ease-in-out data-[state=collapsed]:opacity-0 data-[state=collapsed]:w-0 data-[state=collapsed]:overflow-hidden">
                       <span className="font-semibold">{user.name}</span>
                       <span className="text-xs text-muted-foreground">
                         {user.email}
                       </span>
                     </div>
-                    <ChevronUp className="ml-auto h-4 w-4" />
+                    <ChevronUp className="ml-auto h-4 w-4 data-[state=collapsed]:hidden" />
                   </SidebarMenuButton>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent
