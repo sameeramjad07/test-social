@@ -9,11 +9,16 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, ArrowLeft, Check, X } from "lucide-react";
+import { Loader2, ArrowLeft, Check, X, Send } from "lucide-react";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { format } from "date-fns";
-import { PostStatus } from "@prisma/client";
+import { Platform, PostStatus } from "@prisma/client";
+
+export type SupportedPlatform = Extract<
+  Platform,
+  "LINKEDIN" | "FACEBOOK" | "INSTAGRAM"
+>;
 
 export default function PostEditorPage() {
   const router = useRouter();
@@ -23,6 +28,11 @@ export default function PostEditorPage() {
   const workspaceId = params.workspaceId as string;
 
   const { data: post, isLoading } = api.posts.getPost.useQuery({ postId });
+
+  const { data: socialAccounts } = api.socialAccounts.list.useQuery(
+    { workspaceId },
+    { enabled: !!workspaceId }
+  );
 
   const updatePost = api.posts.update.useMutation({
     onSuccess: () => toast.success("Post updated"),
@@ -36,6 +46,28 @@ export default function PostEditorPage() {
 
   const unapprovePost = api.posts.approvePost.useMutation({
     onSuccess: () => toast.success("Post unapproved"),
+    onError: (error) => toast.error(error.message),
+  });
+
+  const publishPost = api.posts.publish.useMutation({
+    onSuccess: ({ results }) => {
+      const successful = results.filter((r) => r.success);
+      const failed = results.filter((r) => !r.success);
+
+      if (successful.length > 0) {
+        const message = `Post published to ${successful
+          .map((r) => r.platform)
+          .join(", ")}: ${successful.map((r) => r.url).join(", ")}`;
+        toast.success(message);
+      }
+
+      if (failed.length > 0) {
+        const message = `Failed to publish to ${failed
+          .map((r) => r.platform)
+          .join(", ")}: ${failed.map((r) => r.error).join(", ")}`;
+        toast.error(message);
+      }
+    },
     onError: (error) => toast.error(error.message),
   });
 
@@ -67,6 +99,16 @@ export default function PostEditorPage() {
     );
   }
 
+  const supportedPlatforms: SupportedPlatform[] = [
+    Platform.LINKEDIN,
+    Platform.FACEBOOK,
+    Platform.INSTAGRAM,
+  ];
+
+  const hasConnectedAccount = socialAccounts?.some((account) =>
+    supportedPlatforms.includes(account.platform as SupportedPlatform)
+  );
+
   const handleSave = async () => {
     await updatePost.mutateAsync({
       postId,
@@ -86,6 +128,16 @@ export default function PostEditorPage() {
 
   const handleUnapprove = async () => {
     await unapprovePost.mutateAsync({ postId, approve: false });
+  };
+
+  const handlePublish = async () => {
+    if (!hasConnectedAccount) {
+      toast.error(
+        "No supported social accounts (LinkedIn, Facebook, Instagram) connected to this workspace"
+      );
+      return;
+    }
+    await publishPost.mutateAsync({ postId, workspaceId });
   };
 
   return (
@@ -186,6 +238,20 @@ export default function PostEditorPage() {
                 >
                   <X className="w-4 h-4 mr-2" />
                   Unapprove Post
+                </Button>
+              )}
+              {post.status === PostStatus.APPROVED && (
+                <Button
+                  onClick={handlePublish}
+                  disabled={
+                    publishPost.isPending ||
+                    !hasConnectedAccount ||
+                    post.status !== PostStatus.APPROVED
+                  }
+                  className="bg-blue-600 hover:bg-blue-700"
+                >
+                  <Send className="w-4 h-4 mr-2" />
+                  {publishPost.isPending ? "Publishing..." : "Publish Now"}
                 </Button>
               )}
             </div>

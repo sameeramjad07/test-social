@@ -55,7 +55,7 @@ export default function Dashboard() {
       <div className="min-h-screen flex items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
         <p className="ml-2 text-slate-600 dark:text-slate-400">
-          Loading dashboard...
+          Loading Admin dashboard...
         </p>
       </div>
     );

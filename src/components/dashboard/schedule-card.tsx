@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -32,9 +32,11 @@ import {
   Facebook,
   Linkedin,
   Twitter,
+  Image as ImageIcon,
 } from "lucide-react";
 import { toast } from "sonner";
-import { Platform } from "@prisma/client";
+import { Platform, PostStatus } from "@prisma/client";
+import { format } from "date-fns";
 
 interface Schedule {
   id: string;
@@ -46,8 +48,15 @@ interface Schedule {
   isActive: boolean;
   createdAt: Date;
   postsGenerated: number;
+  approvedPosts: number;
   totalPosts: number;
   description?: string | null;
+  posts: {
+    id: string;
+    content: string;
+    status: PostStatus;
+    images: { url: string }[];
+  }[];
 }
 
 interface ScheduleCardProps {
@@ -59,12 +68,46 @@ interface ScheduleCardProps {
 }
 
 const platformIcons = {
-  INSTAGRAM: { icon: Instagram, color: "bg-pink-500" },
+  INSTAGRAM: {
+    icon: Instagram,
+    color: "bg-gradient-to-br from-pink-500 to-purple-500",
+  },
   FACEBOOK: { icon: Facebook, color: "bg-blue-600" },
   LINKEDIN: { icon: Linkedin, color: "bg-blue-700" },
   TWITTER: { icon: Twitter, color: "bg-blue-500" },
   TIKTOK: { icon: Instagram, color: "bg-black" }, // Placeholder for TikTok
 };
+
+function PreviewImage({ src, alt }: { src?: string | null; alt?: string }) {
+  // fallback must match the file in /public (you said no-image.jpg)
+  const FALLBACK = "/no-image.jpg";
+
+  // initialize to src || fallback so we never render an undefined src
+  const [imgSrc, setImgSrc] = useState<string>(src || FALLBACK);
+
+  // if parent changes the src, update local src (but keep fallback as default)
+  useEffect(() => {
+    setImgSrc(src || FALLBACK);
+  }, [src]);
+
+  return (
+    <img
+      src={imgSrc}
+      alt={alt ?? "Post preview"}
+      width={64}
+      height={64}
+      loading="lazy"
+      decoding="async"
+      // if the image fails to load, switch to the fallback
+      onError={() => {
+        if (imgSrc !== FALLBACK) setImgSrc(FALLBACK);
+      }}
+      className="w-16 h-16 object-cover rounded-md border border-slate-200 dark:border-slate-700"
+      // reserve space to avoid layout shifts
+      style={{ minWidth: 64, minHeight: 64 }}
+    />
+  );
+}
 
 export function ScheduleCard({
   schedule,
@@ -76,8 +119,8 @@ export function ScheduleCard({
 
   const getStatusColor = (isActive: boolean) => {
     return isActive
-      ? "bg-green-100 text-green-700"
-      : "bg-yellow-100 text-yellow-700";
+      ? "bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300"
+      : "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/50 dark:text-yellow-300";
   };
 
   const handleDelete = () => {
@@ -88,31 +131,29 @@ export function ScheduleCard({
 
   // Sanitize and validate post counts
   const validTotalPosts = Math.max(1, schedule.totalPosts || 1); // Ensure at least 1 to avoid division by zero
-  const validPostsGenerated = Math.max(
-    0,
-    Math.min(schedule.postsGenerated, validTotalPosts)
-  ); // Cap at totalPosts, ensure non-negative
-
-  // Calculate progress percentage
+  const validApprovedPosts = Math.max(0, schedule.approvedPosts || 0);
   const progressPercentage = Math.round(
-    (validPostsGenerated / validTotalPosts) * 100
+    (validApprovedPosts / validTotalPosts) * 100
   );
 
   return (
     <>
-      <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm dark:bg-slate-900/80 hover:shadow-xl transition-shadow">
+      <Card
+        className="border-0 shadow-lg bg-white/90 backdrop-blur-sm dark:bg-slate-900/90 hover:shadow-xl transition-shadow cursor-pointer rounded-xl overflow-hidden"
+        onClick={() => onEdit(schedule.id)}
+      >
         <CardContent className="p-6">
           <div className="flex items-start justify-between mb-4">
             <div className="flex-1">
-              <div className="flex items-center gap-3 mb-2">
-                <h3 className="font-semibold text-lg text-slate-900 dark:text-slate-100">
+              <div className="flex items-center gap-3 mb-3">
+                <h3 className="font-semibold text-xl text-slate-900 dark:text-slate-100 truncate">
                   {schedule.name}
                 </h3>
                 <Badge className={getStatusColor(schedule.isActive)}>
                   {schedule.isActive ? "Active" : "Draft"}
                 </Badge>
               </div>
-              <div className="flex items-center gap-2 mb-3">
+              <div className="flex items-center gap-2 mb-4">
                 {schedule.platforms.map((platform) => {
                   const platformInfo =
                     platformIcons[platform as keyof typeof platformIcons];
@@ -120,27 +161,36 @@ export function ScheduleCard({
                     platformInfo && (
                       <div
                         key={platform}
-                        className={`w-6 h-6 ${platformInfo.color} rounded flex items-center justify-center`}
+                        className={`w-8 h-8 ${platformInfo.color} rounded-md flex items-center justify-center shadow-sm`}
                       >
-                        <platformInfo.icon className="w-3 h-3 text-white" />
+                        <platformInfo.icon className="w-4 h-4 text-white" />
                       </div>
                     )
                   );
                 })}
               </div>
               {schedule.description && (
-                <p className="text-slate-600 dark:text-slate-400 text-sm mb-3 line-clamp-2">
+                <p className="text-slate-600 dark:text-slate-400 text-sm mb-4 line-clamp-3">
                   {schedule.description}
                 </p>
               )}
             </div>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm">
-                  <MoreHorizontal className="w-4 h-4" />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={(e) => e.stopPropagation()}
+                  className="hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  <MoreHorizontal className="w-5 h-5 text-slate-500" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
+              <DropdownMenuContent
+                align="end"
+                onClick={(e) => e.stopPropagation()}
+                className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700"
+              >
                 <DropdownMenuItem onClick={() => onEdit(schedule.id)}>
                   <Edit className="w-4 h-4 mr-2" />
                   Edit Schedule
@@ -164,7 +214,7 @@ export function ScheduleCard({
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() => setShowDeleteDialog(true)}
-                  className="text-red-600"
+                  className="text-red-600 hover:text-red-700"
                 >
                   <Trash2 className="w-4 h-4 mr-2" />
                   Delete Schedule
@@ -173,48 +223,102 @@ export function ScheduleCard({
             </DropdownMenu>
           </div>
 
-          <div className="space-y-3">
-            <div className="flex items-center gap-4 text-sm text-slate-500">
-              <div className="flex items-center gap-1">
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-1 text-sm text-slate-500 dark:text-slate-400">
                 <Clock className="w-4 h-4" />
                 <span>
-                  {schedule.duration ?? "N/A"} {schedule.durationType}
+                  {schedule.duration
+                    ? `${schedule.duration} ${schedule.durationType}`
+                    : "No duration set"}
                 </span>
               </div>
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-1 text-sm text-slate-500 dark:text-slate-400">
                 <FileText className="w-4 h-4" />
                 <span>
-                  {validPostsGenerated}/{validTotalPosts} posts
+                  {validApprovedPosts}/{validTotalPosts} posts approved
                 </span>
               </div>
             </div>
-
-            <div>
-              <div className="flex justify-between text-sm mb-1">
-                <span className="text-slate-600 dark:text-slate-400">
-                  Progress
-                </span>
-                <span className="text-slate-600 dark:text-slate-400">
-                  {progressPercentage}%
-                </span>
+            <div className="space-y-1">
+              <div className="text-sm text-slate-500 dark:text-slate-400">
+                <span className="font-medium">Frequency:</span>{" "}
+                {schedule.frequency}
               </div>
-              <Progress value={progressPercentage} className="h-2" />
+              <div className="text-sm text-slate-500 dark:text-slate-400">
+                <span className="font-medium">Created:</span>{" "}
+                {format(schedule.createdAt, "PPP")}
+              </div>
             </div>
+          </div>
 
-            <div className="flex items-center justify-between pt-2">
-              <span className="text-xs text-slate-500">
-                Created {schedule.createdAt.toLocaleDateString()}
+          <div className="mb-4">
+            <div className="flex justify-between text-sm mb-2">
+              <span className="text-slate-600 dark:text-slate-400 font-medium">
+                Approval Progress
               </span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => onEdit(schedule.id)}
-                className="bg-gradient-to-r from-blue-600 to-purple-600 text-white border-0 hover:from-blue-700 hover:to-purple-700"
-              >
-                <Edit className="w-3 h-3 mr-1" />
-                Edit
-              </Button>
+              <span className="text-slate-600 dark:text-slate-400">
+                {progressPercentage}%
+              </span>
             </div>
+            <Progress
+              value={progressPercentage}
+              className="h-2 bg-slate-200 dark:bg-slate-700"
+            />
+          </div>
+
+          {schedule.posts.length > 0 && (
+            <div className="space-y-3">
+              <h4 className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                Post Previews
+              </h4>
+              <div className="space-y-3">
+                {schedule.posts.slice(0, 2).map((post) => (
+                  <div
+                    key={post.id}
+                    className="flex gap-3 p-3 bg-slate-50 dark:bg-slate-800 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                  >
+                    <PreviewImage
+                      src={post.images?.[0]?.url ?? null}
+                      alt="Post preview"
+                    />
+                    <div className="flex-1">
+                      <p className="text-sm text-slate-600 dark:text-slate-400 line-clamp-2">
+                        {post.content.length > 100
+                          ? `${post.content.slice(0, 100)}...`
+                          : post.content}
+                      </p>
+                      <Badge
+                        variant={
+                          post.status === PostStatus.APPROVED
+                            ? "default"
+                            : post.status ===
+                                PostStatus.CONTENT_PENDING_APPROVAL ||
+                              post.status === PostStatus.IMAGE_PENDING_APPROVAL
+                            ? "secondary"
+                            : "destructive"
+                        }
+                        className="mt-1 text-xs"
+                      >
+                        {post.status}
+                      </Badge>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="flex justify-end pt-3">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onEdit(schedule.id)}
+              className="bg-gradient-to-r from-blue-600 to-purple-600 text-white border-0 hover:from-blue-700 hover:to-purple-700"
+            >
+              <Edit className="w-3 h-3 mr-1" />
+              View Schedule
+            </Button>
           </div>
         </CardContent>
       </Card>
