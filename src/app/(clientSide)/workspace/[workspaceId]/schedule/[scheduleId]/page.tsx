@@ -53,6 +53,37 @@ import {
 } from "@/components/ui/alert-dialog";
 import EditScheduleDialog from "@/components/schedule/EditScheduleDialog";
 
+function PreviewImage({ src, alt }: { src?: string | null; alt?: string }) {
+  // fallback must match the file in /public (you said no-image.jpg)
+  const FALLBACK = "/no-image.jpg";
+
+  // initialize to src || fallback so we never render an undefined src
+  const [imgSrc, setImgSrc] = useState<string>(src || FALLBACK);
+
+  // if parent changes the src, update local src (but keep fallback as default)
+  useEffect(() => {
+    setImgSrc(src || FALLBACK);
+  }, [src]);
+
+  return (
+    <img
+      src={imgSrc}
+      alt={alt ?? "Post preview"}
+      width={64}
+      height={64}
+      loading="lazy"
+      decoding="async"
+      // if the image fails to load, switch to the fallback
+      onError={() => {
+        if (imgSrc !== FALLBACK) setImgSrc(FALLBACK);
+      }}
+      className="w-36 h-36 object-cover rounded-md border border-slate-200 dark:border-slate-700"
+      // reserve space to avoid layout shifts
+      style={{ minWidth: 64, minHeight: 64 }}
+    />
+  );
+}
+
 const platformIcons = {
   INSTAGRAM: {
     icon: Instagram,
@@ -492,6 +523,9 @@ export default function ScheduleEditorPage() {
                         <TableHead className="w-36 py-4 font-semibold text-slate-900 dark:text-slate-100">
                           Platforms
                         </TableHead>
+                        <TableHead className="w-32 py-4 font-semibold text-slate-900 dark:text-slate-100">
+                          Image
+                        </TableHead>
                         <TableHead className="w-[500px] py-4 font-semibold text-slate-900 dark:text-slate-100">
                           Content
                         </TableHead>
@@ -521,6 +555,14 @@ export default function ScheduleEditorPage() {
                             {post.socialAccounts
                               .map((acc) => acc.platform)
                               .join(", ")}
+                          </TableCell>
+                          <TableCell className="py-6 align-top">
+                            <div className="w-36 h-36 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 shadow-sm">
+                              <PreviewImage
+                                src={post.images?.[0]?.url ?? null}
+                                alt="Post preview"
+                              />
+                            </div>
                           </TableCell>
                           <TableCell className="py-6 align-top text-sm whitespace-normal max-w-[500px]">
                             {post.content || "No content"}

@@ -10,6 +10,7 @@ import {
 import OpenAI from "openai";
 import { format } from "date-fns";
 import type { SupportedPlatform } from "@/app/(clientSide)/workspace/[workspaceId]/schedule/[scheduleId]/posts/[postId]/page";
+import { uploadGeneratedImage } from "@/lib/uploadthing-server";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -939,11 +940,13 @@ export const postsRouter = createTRPCRouter({
             });
           }
 
+          const uploadUrl = await uploadGeneratedImage(imageUrl);
+
           if (post.images.length > 0 && post.images[0]?.id) {
             await ctx.db.postImage.update({
               where: { id: post.images[0].id },
               data: {
-                url: imageUrl,
+                url: uploadUrl,
                 aiPrompt: effectivePrompt,
                 isApproved: false,
               },
@@ -952,7 +955,7 @@ export const postsRouter = createTRPCRouter({
             await ctx.db.postImage.create({
               data: {
                 postId: post.id,
-                url: imageUrl,
+                url: uploadUrl,
                 aiPrompt: effectivePrompt,
                 isApproved: false,
                 order: 0,
