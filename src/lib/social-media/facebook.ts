@@ -4,6 +4,8 @@ import type {
   PostContent,
   PostResult,
   SocialMediaAccount,
+  InsightsTimeRange,
+  AccountInsights,
 } from "./social-media.types";
 
 export class FacebookWrapper extends SocialMediaWrapper {
@@ -225,6 +227,241 @@ export class FacebookWrapper extends SocialMediaWrapper {
         accessToken,
       };
     } catch (error) {
+      this.handleApiError(error, "Facebook");
+    }
+  }
+  // Add this method to your FacebookWrapper class
+
+  async getAccountInsights(
+    accessToken: string,
+    timeRange: InsightsTimeRange = { days: 30 }
+  ): Promise<AccountInsights> {
+    try {
+      const pageId = await this.getPageId(accessToken);
+
+      // Calculate date range
+      const endDate = new Date();
+      const startDate = new Date();
+
+      if (timeRange.days) {
+        startDate.setDate(endDate.getDate() - timeRange.days);
+      } else if (timeRange.startDate && timeRange.endDate) {
+        startDate.setTime(new Date(timeRange.startDate).getTime());
+        endDate.setTime(new Date(timeRange.endDate).getTime());
+      }
+
+      const since = startDate.toISOString().split("T")[0];
+      const until = endDate.toISOString().split("T")[0];
+
+      // Get basic page info
+      const pageInfoResponse = await axios.get(
+        `https://graph.facebook.com/${this.apiVersion}/${pageId}?fields=id,name,fan_count,followers_count,talking_about_count&access_token=${accessToken}`
+      );
+
+      // Get page insights
+      const pageInsightsMetrics = [
+        "page_impressions",
+        "page_impressions_unique",
+        "page_post_engagements",
+        "page_posts_impressions",
+        "page_posts_impressions_unique",
+        "page_fan_adds",
+        "page_fan_removes",
+        "page_views_total",
+        "page_video_views",
+      ].join(",");
+
+      const pageInsightsResponse = await axios.get(
+        `https://graph.facebook.com/${this.apiVersion}/${pageId}/insights?metric=${pageInsightsMetrics}&since=${since}&until=${until}&period=day&access_token=${accessToken}`
+      );
+
+      // Get posts from the time range
+      const postsResponse = await axios.get(
+        `https://graph.facebook.com/${this.apiVersion}/${pageId}/posts?fields=id,message,created_time,type,permalink_url&since=${since}&until=${until}&limit=50&access_token=${accessToken}`
+      );
+
+      // Get insights for individual posts to find top performers
+      const postsWithInsights = await Promise.all(
+        postsResponse.data.data.slice(0, 10).map(async (post: any) => {
+          try {
+            const postInsightsResponse = await axios.get(
+              `https://graph.facebook.com/${this.apiVersion}/${post.id}/insights?metric=post_impressions,post_engaged_users,post_clicks,post_reactions_like_total,post_reactions_love_total,post_reactions_wow_total,post_reactions_haha_total,post_reactions_sorry_total,post_reactions_anger_total&access_token=${accessToken}`
+            );
+
+            const insights = postInsightsResponse.data.data.reduce(
+              (acc: any, insight: any) => {
+                acc[insight.name] = insight.values[0]?.value || 0;
+                return acc;
+              },
+              {}
+            );
+
+            // Calculate total reactions
+            const totalReactions =
+              (insights.post_reactions_like_total || 0) +
+              (insights.post_reactions_love_total || 0) +
+              (insights.post_reactions_wow_total || 0) +
+              (insights.post_reactions_haha_total || 0) +
+              (insights.post_reactions_sorry_total || 0) +
+              (insights.post_reactions_anger_total || 0);
+
+            return {
+              ...post,
+              insights: {
+                ...insights,
+                total_reactions: totalReactions,
+              },
+            };
+          } catch (error) {
+            return {
+              ...post,
+              insights: {
+                post_impressions: 0,
+                post_engaged_users: 0,
+                post_clicks: 0,
+                total_reactions: 0,
+              },
+            };
+          }
+        })
+      );
+
+      // Calculate total metrics from page insights
+      const insightsTotals = pageInsightsResponse.data.data.reduce(
+        (totals: any, insight: any) => {
+          const total = insight.values.reduce(
+            (sum: number, value: any) => sum + (value.value || 0),
+            0
+          );
+          totals[insight.name] = total;
+          return totals;
+        },
+        {}
+      );
+
+      // Calculate engagement from posts
+      const totalPostEngagement = postsWithInsights.reduce((sum, post) => {
+        return sum + (post.insights?.post_engaged_users || 0);
+      }, 0);
+
+      // Get demographic insights
+      let demographics = {};
+      try {
+        const demographicsMetrics = [
+          "page_fans_gender_age",
+          "page_fans_country",
+          "page_fans_city",
+        ].join(",");
+
+        const demographicsResponse = await axios.get(
+          `https://graph.facebook.com/${this.apiVersion}/${pageId}/insights?metric=${demographicsMetrics}&period=lifetime&access_token=${accessToken}`
+        );
+
+        const demoData = demographicsResponse.data.data.reduce(
+          (acc: any, insight: any) => {
+            acc[insight.name] = insight.values[0]?.value || {};
+            return acc;
+          },
+          {}
+        );
+
+        demographics = {
+          genderSplit: Object.entries(demoData.page_fans_gender_age || {})
+            .reduce((acc: any[], [key, value]: [string, any]) => {
+              const [gender] = key.split(".");
+              const existing = acc.find((item) => item.gender === gender);
+              if (existing) {
+                existing.count += value;
+              } else {
+                acc.push({ gender, count: value });
+              }
+              return acc;
+            }, [])
+            .map((item: any) => ({
+              gender: item.gender,
+              percentage: parseFloat(
+                ((item.count / pageInfoResponse.data.fan_count) * 100).toFixed(
+                  2
+                )
+              ),
+            })),
+          topCountries: Object.entries(demoData.page_fans_country || {})
+            .sort(([, a]: [string, any], [, b]: [string, any]) => b - a)
+            .slice(0, 5)
+            .map(([country, count]: [string, any]) => ({
+              country,
+              percentage: parseFloat(
+                ((count / pageInfoResponse.data.fan_count) * 100).toFixed(2)
+              ),
+            })),
+          topCities: Object.entries(demoData.page_fans_city || {})
+            .sort(([, a]: [string, any], [, b]: [string, any]) => b - a)
+            .slice(0, 5)
+            .map(([city, count]: [string, any]) => ({
+              city,
+              percentage: parseFloat(
+                ((count / pageInfoResponse.data.fan_count) * 100).toFixed(2)
+              ),
+            })),
+        };
+      } catch (error) {
+        console.warn("Facebook demographic insights not available:", error);
+      }
+
+      // Sort and get top posts by engagement
+      const topPosts = postsWithInsights
+        .sort(
+          (a, b) =>
+            (b.insights?.post_engaged_users || 0) -
+            (a.insights?.post_engaged_users || 0)
+        )
+        .slice(0, 5)
+        .map((post) => ({
+          id: post.id,
+          type: post.type || "status",
+          createdAt: post.created_time,
+          impressions: post.insights?.post_impressions || 0,
+          engagement: post.insights?.post_engaged_users || 0,
+          url: post.permalink_url,
+        }));
+
+      const totalImpressions = insightsTotals.page_posts_impressions || 0;
+      const engagementRate =
+        totalImpressions > 0
+          ? (totalPostEngagement / totalImpressions) * 100
+          : 0;
+
+      return {
+        platform: "facebook",
+        accountId: pageId,
+        timeRange: {
+          startDate: startDate.toISOString(),
+          endDate: endDate.toISOString(),
+        },
+        metrics: {
+          followers:
+            pageInfoResponse.data.fan_count ||
+            pageInfoResponse.data.followers_count,
+          posts: postsResponse.data.data.length,
+          impressions: totalImpressions,
+          reach: insightsTotals.page_posts_impressions_unique || 0,
+          engagement: totalPostEngagement,
+          engagementRate: parseFloat(engagementRate.toFixed(2)),
+          likes: postsWithInsights.reduce(
+            (sum, post) => sum + (post.insights?.total_reactions || 0),
+            0
+          ),
+          videoViews: insightsTotals.page_video_views || 0,
+          profileViews: insightsTotals.page_views_total || 0,
+        },
+        demographics,
+        topPosts,
+      };
+    } catch (error: any) {
+      console.error(
+        "Facebook insights error:",
+        error.response?.data || error.message
+      );
       this.handleApiError(error, "Facebook");
     }
   }

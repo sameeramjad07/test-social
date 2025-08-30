@@ -1,49 +1,46 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useForm, Controller } from "react-hook-form";
-import { z } from "zod";
-import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter, useParams } from "next/navigation";
 import { api } from "@/trpc/react";
-import { Platform, ScheduleFrequency, PostStatus } from "@prisma/client";
+import { Platform, PostStatus } from "@prisma/client";
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-  CardFooter,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { Progress } from "@/components/ui/progress";
 import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
   ArrowLeft,
   Play,
-  Plus,
   Instagram,
   Twitter,
   Facebook,
   Linkedin,
   Sparkles,
   Trash2,
+  Edit,
+  Check,
+  X,
+  Image,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
-import { format } from "date-fns";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { format, isAfter, addDays } from "date-fns";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -54,6 +51,38 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import EditScheduleDialog from "@/components/schedule/EditScheduleDialog";
+
+function PreviewImage({ src, alt }: { src?: string | null; alt?: string }) {
+  // fallback must match the file in /public (you said no-image.jpg)
+  const FALLBACK = "/no-image.jpg";
+
+  // initialize to src || fallback so we never render an undefined src
+  const [imgSrc, setImgSrc] = useState<string>(src || FALLBACK);
+
+  // if parent changes the src, update local src (but keep fallback as default)
+  useEffect(() => {
+    setImgSrc(src || FALLBACK);
+  }, [src]);
+
+  return (
+    <img
+      src={imgSrc}
+      alt={alt ?? "Post preview"}
+      width={64}
+      height={64}
+      loading="lazy"
+      decoding="async"
+      // if the image fails to load, switch to the fallback
+      onError={() => {
+        if (imgSrc !== FALLBACK) setImgSrc(FALLBACK);
+      }}
+      className="w-36 h-36 object-cover rounded-md border border-slate-200 dark:border-slate-700"
+      // reserve space to avoid layout shifts
+      style={{ minWidth: 64, minHeight: 64 }}
+    />
+  );
+}
 
 const platformIcons = {
   INSTAGRAM: {
@@ -66,40 +95,31 @@ const platformIcons = {
   TIKTOK: { icon: Twitter, color: "bg-black" },
 };
 
-const scheduleFormSchema = z.object({
-  name: z.string().min(2).max(50),
-  description: z.string().optional(),
-  platforms: z.array(z.nativeEnum(Platform)).min(1),
-  startDate: z.string(),
-  endDate: z.string().optional(),
-  frequency: z.nativeEnum(ScheduleFrequency),
-  weekDays: z.array(z.number().min(0).max(6)).optional(),
-  monthDays: z.array(z.number().min(1).max(31)).optional(),
-  timeSlots: z.array(z.string()).min(1),
-  postsPerSlot: z.number().min(1),
-});
-
-type ScheduleForm = z.infer<typeof scheduleFormSchema>;
-
 export default function ScheduleEditorPage() {
   const router = useRouter();
   const params = useParams();
   const scheduleId = params.scheduleId as string;
   const workspaceId = params.workspaceId as string;
 
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [bulkPrompt, setBulkPrompt] = useState("");
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showPostDeleteDialog, setShowPostDeleteDialog] = useState(false);
+  const [postToDelete, setPostToDelete] = useState<string | null>(null);
+
   const { data: schedule, isLoading } = api.schedules.getSchedule.useQuery(
     { scheduleId, workspaceId },
     { enabled: !!scheduleId && !!workspaceId }
   );
 
-  const { data: socialAccounts } = api.socialAccounts.list.useQuery({
-    workspaceId,
-  });
-
-  const updateSchedule = api.schedules.update.useMutation({
-    onSuccess: () => toast.success("Schedule updated"),
-    onError: (error) => toast.error(error.message),
-  });
+  const { data: progress, refetch: refetchProgress } =
+    api.posts.getGenerationProgress.useQuery(
+      { scheduleId },
+      {
+        enabled: !!scheduleId,
+        refetchInterval: schedule?.posts.length === 0 ? 5000 : 0,
+      }
+    );
 
   const activateSchedule = api.schedules.activateSchedule.useMutation({
     onSuccess: () => toast.success("Schedule activated"),
@@ -117,82 +137,60 @@ export default function ScheduleEditorPage() {
   const deleteAllPosts = api.posts.deleteAllPosts.useMutation({
     onSuccess: () => {
       toast.success("All posts deleted");
-      refetchSchedule();
+      setBulkPrompt("");
+      router.refresh();
     },
     onError: (error) => toast.error(error.message),
   });
 
-  const handleAddTimeSlot = () => {
-    const timeSlots = getValues("timeSlots");
-    setValue("timeSlots", [...timeSlots, "12:00"]);
-  };
-
-  const handleRemoveTimeSlot = (index: number) => {
-    if (getValues("timeSlots").length > 1) {
-      const timeSlots = getValues("timeSlots").filter((_, i) => i !== index);
-      setValue("timeSlots", timeSlots);
-    }
-  };
-
-  const { register, handleSubmit, setValue, getValues, reset, watch, control } =
-    useForm<ScheduleForm>({
-      resolver: zodResolver(scheduleFormSchema),
-      defaultValues: {
-        name: "",
-        platforms: [],
-        startDate: "",
-        frequency: ScheduleFrequency.DAILY,
-        timeSlots: ["12:00"],
-        postsPerSlot: 1,
+  const generateImagesForAllPosts =
+    api.posts.generateImagesForAllPosts.useMutation({
+      onSuccess: () => {
+        toast.success("Image generation started for all posts");
+        refetchProgress();
+        router.refresh();
       },
+      onError: (error) => toast.error(error.message),
     });
 
-  const timeSlots = watch("timeSlots");
+  const deletePost = api.posts.deletePost.useMutation({
+    onSuccess: () => {
+      toast.success("Post deleted");
+      router.refresh();
+    },
+    onError: (error) => toast.error(error.message),
+  });
 
-  const [generatePrompt, setGeneratePrompt] = useState("");
-  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
-  const { refetch: refetchSchedule } = api.schedules.getSchedule.useQuery(
-    { scheduleId, workspaceId },
-    { enabled: false }
-  );
-  const { data: progress, refetch: refetchProgress } =
-    api.posts.getGenerationProgress.useQuery(
-      { scheduleId },
-      { enabled: false, refetchInterval: 5000 }
-    );
+  const bulkApprovePosts = api.posts.bulkApprovePosts.useMutation({
+    onSuccess: () => {
+      toast.success("All posts approved");
+      router.refresh();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const approvePost = api.posts.approvePost.useMutation({
+    onSuccess: () => toast.success("Post approved"),
+    onError: (error) => toast.error(error.message),
+  });
+
+  const unapprovePost = api.posts.approvePost.useMutation({
+    onSuccess: () => toast.success("Post unapproved"),
+    onError: (error) => toast.error(error.message),
+  });
 
   useEffect(() => {
     if (schedule) {
-      reset({
-        name: schedule.name,
-        description: schedule.description || "",
-        platforms: schedule.platforms,
-        startDate: format(schedule.startDate, "yyyy-MM-dd"),
-        endDate: schedule.endDate ? format(schedule.endDate, "yyyy-MM-dd") : "",
-        frequency: schedule.frequency,
-        weekDays: schedule.weekDays || [],
-        monthDays: schedule.monthDays || [],
-        timeSlots: schedule.timeSlots,
-        postsPerSlot: schedule.postsPerSlot,
-      });
+      setBulkPrompt(schedule.contentPrompt || "");
     }
-  }, [schedule, reset]);
-
-  const onSubmit = (data: ScheduleForm) => {
-    updateSchedule.mutate({
-      scheduleId,
-      workspaceId,
-      ...data,
-      endDate: data.endDate ? data.endDate : null,
-    });
-  };
+  }, [schedule]);
 
   const handleActivate = () => {
     activateSchedule.mutate({ scheduleId, workspaceId });
   };
 
   const handleGenerateBulkPosts = async () => {
-    if (!generatePrompt) {
+    if (!bulkPrompt) {
       toast.error("Please provide a detailed prompt");
       return;
     }
@@ -200,19 +198,37 @@ export default function ScheduleEditorPage() {
       await generateBulkPosts.mutateAsync({
         scheduleId,
         workspaceId,
-        prompt: generatePrompt,
+        prompt: bulkPrompt,
       });
-      // Periodically refetch progress until completion
       const interval = setInterval(() => {
         refetchProgress();
         if (progress?.completed === progress?.total) {
           clearInterval(interval);
           toast.success("Post generation completed");
+          router.refresh();
         }
       }, 5000);
     } catch (error) {
       toast.error(
         "Failed to start generation process: " + (error as Error).message
+      );
+    }
+  };
+
+  const handleGenerateImagesForAllPosts = async () => {
+    try {
+      await generateImagesForAllPosts.mutateAsync({ scheduleId, workspaceId });
+      const interval = setInterval(() => {
+        refetchProgress();
+        if (progress?.completed === progress?.total) {
+          clearInterval(interval);
+          toast.success("Image generation completed for all posts");
+          router.refresh();
+        }
+      }, 5000);
+    } catch (error) {
+      toast.error(
+        "Failed to start image generation process: " + (error as Error).message
       );
     }
   };
@@ -226,37 +242,42 @@ export default function ScheduleEditorPage() {
     setShowDeleteDialog(false);
   };
 
+  const handleDeletePost = (postId: string) => {
+    setPostToDelete(postId);
+    setShowPostDeleteDialog(true);
+  };
+
+  const confirmDeletePost = () => {
+    if (postToDelete) {
+      deletePost.mutate({ postId: postToDelete, workspaceId });
+      setShowPostDeleteDialog(false);
+      setPostToDelete(null);
+    }
+  };
+
+  const handleApprove = (postId: string) => {
+    approvePost.mutate({ postId, approve: true });
+  };
+
+  const handleUnapprove = (postId: string) => {
+    unapprovePost.mutate({ postId, approve: false });
+  };
+
   const allPostsApproved = schedule?.posts.every(
     (post) => post.status === PostStatus.APPROVED
   );
 
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
-      </div>
-    );
-  }
-
-  if (!schedule) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p>Schedule not found</p>
-      </div>
-    );
-  }
-
   const calculateTotalPosts = () => {
     let datesCount = 0;
-    let current = new Date(schedule.startDate);
-    const end = schedule.endDate
+    let current = new Date(schedule?.startDate || new Date());
+    const end = schedule?.endDate
       ? new Date(schedule.endDate)
       : new Date(current.getTime() + 30 * 24 * 60 * 60 * 1000);
-    while (current <= end) {
+    while (!isAfter(current, end)) {
       let include = false;
       const dayOfWeek = current.getDay();
       const dayOfMonth = current.getDate();
-      switch (schedule.frequency) {
+      switch (schedule?.frequency) {
         case "DAILY":
           include = true;
           break;
@@ -275,12 +296,35 @@ export default function ScheduleEditorPage() {
           break;
       }
       if (include) datesCount++;
-      current.setDate(current.getDate() + 1);
+      current = addDays(current, 1);
     }
-    return schedule.postsPerSlot * schedule.timeSlots.length * datesCount;
+    return (
+      (schedule?.postsPerSlot || 1) *
+      (schedule?.timeSlots.length || 1) *
+      datesCount
+    );
   };
 
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
+
+  if (!schedule) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <p>Schedule not found</p>
+      </div>
+    );
+  }
+
   const totalPosts = calculateTotalPosts();
+  const completionPercentage = progress
+    ? (progress.completed / progress.total) * 100
+    : 0;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
@@ -292,7 +336,10 @@ export default function ScheduleEditorPage() {
           className="mb-8"
         >
           <div className="flex items-center gap-4 mb-4">
-            <Button variant="outline" onClick={() => router.back()}>
+            <Button
+              variant="outline"
+              onClick={() => router.push(`/workspace/${workspaceId}/dashboard`)}
+            >
               <ArrowLeft className="w-4 h-4 mr-2" />
               Back to Dashboard
             </Button>
@@ -341,196 +388,121 @@ export default function ScheduleEditorPage() {
                 </Button>
               )}
               <Button
-                onClick={() =>
-                  router.push(
-                    `/workspace/${workspaceId}/schedule/${scheduleId}/posts`
-                  )
-                }
                 variant="outline"
+                onClick={() => setIsEditDialogOpen(true)}
               >
-                View Posts
+                <Edit className="w-4 h-4 mr-2" />
+                Edit Schedule
               </Button>
             </div>
           </div>
         </motion.div>
 
-        <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm dark:bg-slate-900/80">
-          <Tabs defaultValue="edit" className="w-full">
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="edit">Edit Schedule Details</TabsTrigger>
-              <TabsTrigger value="generate">Generate Posts</TabsTrigger>
-            </TabsList>
-            <TabsContent value="edit">
-              <CardHeader>
-                <CardTitle>Edit Schedule Details</CardTitle>
-                <CardDescription>
-                  Update the schedule configuration
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-                  <div className="space-y-2">
-                    <Label htmlFor="name">Name</Label>
-                    <Input id="name" {...register("name")} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="description">Description</Label>
-                    <Textarea id="description" {...register("description")} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Platforms</Label>
-                    <div className="grid grid-cols-2 gap-2">
-                      {socialAccounts?.map((account) => (
-                        <div
-                          key={account.id}
-                          className="flex items-center space-x-2"
-                        >
-                          <Checkbox
-                            checked={getValues("platforms")?.includes(
-                              account.platform
-                            )}
-                            onCheckedChange={(checked) => {
-                              const platforms = getValues("platforms") || [];
-                              setValue(
-                                "platforms",
-                                checked
-                                  ? [...platforms, account.platform]
-                                  : platforms.filter(
-                                      (p) => p !== account.platform
-                                    )
-                              );
-                            }}
-                          />
-                          <Label>{account.platform}</Label>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="startDate">Start Date</Label>
-                      <Input
-                        id="startDate"
-                        type="date"
-                        {...register("startDate")}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="endDate">End Date</Label>
-                      <Input
-                        id="endDate"
-                        type="date"
-                        {...register("endDate")}
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="frequency">Frequency</Label>
-                    <Select
-                      onValueChange={(value) =>
-                        setValue("frequency", value as ScheduleFrequency)
-                      }
+        <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm dark:bg-slate-900/80 mb-8 rounded-xl">
+          <CardHeader>
+            <CardTitle>Manage Posts</CardTitle>
+            <CardDescription>
+              Generate, review, and approve posts for this schedule
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {schedule.posts.length === 0 && (
+              <div className="space-y-4">
+                <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-lg">
+                  <p className="text-sm text-slate-600 dark:text-slate-400">
+                    Based on your schedule configuration, {totalPosts} posts
+                    will be generated for the following:
+                  </p>
+                  <ul className="list-disc list-inside text-sm text-slate-600 dark:text-slate-400 mt-2">
+                    <li>
+                      <strong>Platforms:</strong>{" "}
+                      {schedule.platforms.join(", ")}
+                    </li>
+                    <li>
+                      <strong>Dates:</strong>{" "}
+                      {format(schedule.startDate, "PPP")} to{" "}
+                      {schedule.endDate
+                        ? format(schedule.endDate, "PPP")
+                        : "30 days from start"}
+                    </li>
+                    <li>
+                      <strong>Time Slots:</strong>{" "}
+                      {schedule.timeSlots.join(", ")}
+                    </li>
+                    <li>
+                      <strong>Posts per Slot:</strong> {schedule.postsPerSlot}
+                    </li>
+                  </ul>
+                  <p className="text-sm text-slate-600 dark:text-slate-400 mt-2">
+                    Provide a detailed prompt below to generate content and
+                    hashtags for all posts.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="bulk-prompt" className="text-sm font-medium">
+                    Content Prompt
+                  </Label>
+                  <Textarea
+                    id="bulk-prompt"
+                    value={bulkPrompt}
+                    onChange={(e) => setBulkPrompt(e.target.value)}
+                    rows={6}
+                    className="w-full p-2 border rounded-md"
+                    placeholder="Enter a detailed prompt (e.g., 'Create engaging posts about sustainable fashion for young professionals on the specified platforms, tailored for August 21-31, 2025, with hashtags like #SustainableFashion #EcoFriendly')"
+                  />
+                </div>
+                <Button
+                  onClick={handleGenerateBulkPosts}
+                  disabled={generateBulkPosts.isPending || !bulkPrompt}
+                  className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
+                >
+                  <Sparkles className="w-4 h-4 mr-2" />
+                  {generateBulkPosts.isPending
+                    ? "Starting Generation..."
+                    : "Generate All Posts"}
+                </Button>
+              </div>
+            )}
+            {progress && progress.total > 0 && (
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span>Generation Progress</span>
+                  <span>
+                    {progress.completed}/{progress.total} posts (
+                    {Math.round(completionPercentage)}%)
+                  </span>
+                </div>
+                <Progress value={completionPercentage} className="h-2" />
+              </div>
+            )}
+            {schedule.posts.length > 0 && (
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-lg font-semibold">Posts</h3>
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={handleGenerateImagesForAllPosts}
+                      disabled={generateImagesForAllPosts.isPending}
+                      className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700"
                     >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {Object.values(ScheduleFrequency).map((freq) => (
-                          <SelectItem key={freq} value={freq}>
-                            {freq}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Time Slots</Label>
-                    <div className="space-y-2">
-                      {timeSlots.map((slot, index) => (
-                        <div key={index} className="flex items-center gap-2">
-                          <Controller
-                            control={control}
-                            name="timeSlots"
-                            render={({ field }) => (
-                              <Input
-                                type="time"
-                                value={slot}
-                                onChange={(e) => {
-                                  const newTimeSlots = [...field.value];
-                                  newTimeSlots[index] = e.target.value;
-                                  field.onChange(newTimeSlots);
-                                }}
-                              />
-                            )}
-                          />
-                          {timeSlots.length > 1 && (
-                            <Button
-                              type="button"
-                              variant="outline"
-                              onClick={() => {
-                                const newTimeSlots = timeSlots.filter(
-                                  (_, i) => i !== index
-                                );
-                                setValue("timeSlots", newTimeSlots);
-                              }}
-                              className="h-9"
-                            >
-                              <Trash2 className="w-4 h-4 text-red-600" />
-                            </Button>
-                          )}
-                        </div>
-                      ))}
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() =>
-                          setValue("timeSlots", [...timeSlots, "12:00"])
-                        }
-                      >
-                        <Plus className="w-4 h-4 mr-2" /> Add Time Slot
-                      </Button>
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="postsPerSlot">Posts per Slot</Label>
-                    <Input
-                      id="postsPerSlot"
-                      type="number"
-                      {...register("postsPerSlot", { valueAsNumber: true })}
-                    />
-                  </div>
-                  <Button type="submit" disabled={updateSchedule.isPending}>
-                    {updateSchedule.isPending ? "Saving..." : "Save Changes"}
-                  </Button>
-                </form>
-              </CardContent>
-            </TabsContent>
-            <TabsContent value="generate">
-              <CardHeader>
-                <CardTitle>Generate Posts</CardTitle>
-                <CardDescription>
-                  Generate content, images, and hashtags for your schedule
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                {schedule.posts.length > 0 ? (
-                  <div className="space-y-4">
-                    <p className="text-sm text-slate-600 dark:text-slate-400">
-                      Posts for this schedule have already been created. You can
-                      view and manage them on the{" "}
-                      <Button
-                        variant="link"
-                        onClick={() =>
-                          router.push(
-                            `/workspace/${workspaceId}/schedule/${scheduleId}/posts`
-                          )
-                        }
-                        className="p-0 h-auto text-blue-600 dark:text-blue-400"
-                      >
-                        Posts page
-                      </Button>
-                      .
-                    </p>
+                      <Image className="w-4 h-4 mr-2" />
+                      {generateImagesForAllPosts.isPending
+                        ? "Generating Images..."
+                        : "Generate Images for all Posts"}
+                    </Button>
+                    {/* ✅ New bulk approve button */}
+                    <Button
+                      onClick={() =>
+                        bulkApprovePosts.mutate({ scheduleId, workspaceId })
+                      }
+                      disabled={bulkApprovePosts.isPending}
+                      className="bg-green-600 hover:bg-green-700 text-white"
+                    >
+                      <Check className="w-4 h-4 mr-2" />
+                      {bulkApprovePosts.isPending
+                        ? "Approving..."
+                        : "Approve All Posts"}
+                    </Button>
                     <Button
                       variant="destructive"
                       onClick={handleDeleteAllPosts}
@@ -540,105 +512,145 @@ export default function ScheduleEditorPage() {
                       Delete All Posts
                     </Button>
                   </div>
-                ) : (
-                  <div className="space-y-6">
-                    <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-lg">
-                      <p className="text-sm text-slate-600 dark:text-slate-400">
-                        Based on your schedule configuration, {totalPosts} posts
-                        will be generated. Provide a detailed prompt below to
-                        guide the AI in creating unique content, images, and
-                        hashtags for each post.
-                      </p>
-                      <ul className="list-disc list-inside text-sm text-slate-600 dark:text-slate-400 mt-2">
-                        <li>
-                          <strong>Platforms:</strong>{" "}
-                          {schedule.platforms.join(", ")}
-                        </li>
-                        <li>
-                          <strong>Dates:</strong>{" "}
-                          {format(schedule.startDate, "PPP")} to{" "}
-                          {schedule.endDate
-                            ? format(schedule.endDate, "PPP")
-                            : "30 days from start"}
-                        </li>
-                        <li>
-                          <strong>Time Slots:</strong>{" "}
-                          {schedule.timeSlots.join(", ")}
-                        </li>
-                        <li>
-                          <strong>Posts per Slot:</strong>{" "}
-                          {schedule.postsPerSlot}
-                        </li>
-                      </ul>
-                    </div>
-                    <div className="space-y-2">
-                      <Label
-                        htmlFor="generate-prompt"
-                        className="text-sm font-medium"
-                      >
-                        Detailed Prompt
-                      </Label>
-                      <Textarea
-                        id="generate-prompt"
-                        value={generatePrompt}
-                        onChange={(e) => setGeneratePrompt(e.target.value)}
-                        rows={6}
-                        className="w-full p-2 border rounded-md"
-                        placeholder="Enter a detailed prompt (e.g., 'Create engaging posts about sustainable fashion for young professionals on Instagram and LinkedIn, with vibrant images and hashtags like #SustainableFashion #EcoFriendly')"
-                      />
-                    </div>
-                    <Button
-                      onClick={handleGenerateBulkPosts}
-                      disabled={generateBulkPosts.isPending || !generatePrompt}
-                      className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
-                    >
-                      <Sparkles className="w-4 h-4 mr-2" />
-                      {generateBulkPosts.isPending
-                        ? "Generating..."
-                        : "Start Generation Process"}
-                    </Button>
-                  </div>
-                )}
-                {progress && progress.total > 0 && (
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-sm">
-                      <span>Generation Progress</span>
-                      <span>
-                        {progress.completed}/{progress.total} posts (
-                        {Math.round(
-                          (progress.completed / progress.total) * 100
-                        )}
-                        %)
-                      </span>
-                    </div>
-                    <Progress
-                      value={(progress.completed / progress.total) * 100}
-                      className="h-2"
-                    />
-                    {progress.completed === progress.total && (
-                      <p className="text-sm text-green-600 dark:text-green-400">
-                        Generation completed at {format(new Date(), "PPP p")}.
-                      </p>
-                    )}
-                  </div>
-                )}
-              </CardContent>
-              <CardFooter>
-                <Button
-                  variant="outline"
-                  onClick={() =>
-                    router.push(
-                      `/workspace/${workspaceId}/schedule/${scheduleId}/posts`
-                    )
-                  }
-                  className="mt-4"
-                >
-                  View Posts
-                </Button>
-              </CardFooter>
-            </TabsContent>
-          </Tabs>
+                </div>
+                <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="bg-slate-100 dark:bg-slate-800">
+                        <TableHead className="w-48 py-4 font-semibold text-slate-900 dark:text-slate-100">
+                          Scheduled Date
+                        </TableHead>
+                        <TableHead className="w-36 py-4 font-semibold text-slate-900 dark:text-slate-100">
+                          Platforms
+                        </TableHead>
+                        <TableHead className="w-32 py-4 font-semibold text-slate-900 dark:text-slate-100">
+                          Image
+                        </TableHead>
+                        <TableHead className="w-[500px] py-4 font-semibold text-slate-900 dark:text-slate-100">
+                          Content
+                        </TableHead>
+                        <TableHead className="w-48 py-4 font-semibold text-slate-900 dark:text-slate-100">
+                          Hashtags
+                        </TableHead>
+                        <TableHead className="w-32 py-4 font-semibold text-slate-900 dark:text-slate-100">
+                          Status
+                        </TableHead>
+                        <TableHead className="w-72 py-4 font-semibold text-slate-900 dark:text-slate-100">
+                          Actions
+                        </TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {schedule.posts.map((post) => (
+                        <TableRow
+                          key={post.id}
+                          className="min-h-[100px] hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                        >
+                          <TableCell className="py-6 align-top text-sm">
+                            {post.scheduledAt
+                              ? format(post.scheduledAt, "PPP HH:mm")
+                              : "Not scheduled"}
+                          </TableCell>
+                          <TableCell className="py-6 align-top text-sm">
+                            {post.socialAccounts
+                              .map((acc) => acc.platform)
+                              .join(", ")}
+                          </TableCell>
+                          <TableCell className="py-6 align-top">
+                            <div className="w-36 h-36 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 shadow-sm">
+                              <PreviewImage
+                                src={post.images?.[0]?.url ?? null}
+                                alt="Post preview"
+                              />
+                            </div>
+                          </TableCell>
+                          <TableCell className="py-6 align-top text-sm whitespace-normal max-w-[500px]">
+                            {post.content || "No content"}
+                          </TableCell>
+                          <TableCell className="py-6 align-top text-sm whitespace-normal">
+                            {post.hashtags.map((tag) => `#${tag}`).join(", ") ||
+                              "None"}
+                          </TableCell>
+                          <TableCell className="py-6 align-top">
+                            <Badge
+                              variant={
+                                post.status === PostStatus.APPROVED
+                                  ? "default"
+                                  : post.status ===
+                                    PostStatus.CONTENT_PENDING_APPROVAL
+                                  ? "secondary"
+                                  : "destructive"
+                              }
+                            >
+                              {post.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="py-6 align-top flex gap-2">
+                            <Button
+                              variant="outline"
+                              onClick={() =>
+                                router.push(
+                                  `/workspace/${workspaceId}/schedule/${scheduleId}/posts/${post.id}`
+                                )
+                              }
+                              disabled={
+                                post.status === PostStatus.APPROVED ||
+                                post.status === PostStatus.SCHEDULED
+                              }
+                              size="sm"
+                            >
+                              <Edit className="w-4 h-4 mr-2" />
+                              Edit
+                            </Button>
+                            {post.status !== PostStatus.APPROVED && (
+                              <Button
+                                onClick={() => handleApprove(post.id)}
+                                disabled={approvePost.isPending}
+                                className="bg-green-600 hover:bg-green-700"
+                                size="sm"
+                              >
+                                <Check className="w-4 h-4 mr-2" />
+                                Approve
+                              </Button>
+                            )}
+                            {post.status === PostStatus.APPROVED && (
+                              <Button
+                                onClick={() => handleUnapprove(post.id)}
+                                disabled={unapprovePost.isPending}
+                                variant="outline"
+                                size="sm"
+                              >
+                                <X className="w-4 h-4 mr-2" />
+                                Unapprove
+                              </Button>
+                            )}
+                            <Button
+                              variant="destructive"
+                              onClick={() => handleDeletePost(post.id)}
+                              disabled={deletePost.isPending}
+                              size="sm"
+                            >
+                              <Trash2 className="w-4 h-4 mr-2" />
+                              Delete
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            )}
+          </CardContent>
         </Card>
+
+        <EditScheduleDialog
+          open={isEditDialogOpen}
+          onOpenChange={setIsEditDialogOpen}
+          schedule={schedule}
+          workspaceId={workspaceId}
+          scheduleId={scheduleId}
+        />
 
         <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
           <AlertDialogContent>
@@ -656,6 +668,30 @@ export default function ScheduleEditorPage() {
                 disabled={deleteAllPosts.isPending}
               >
                 {deleteAllPosts.isPending ? "Deleting..." : "Delete"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        <AlertDialog
+          open={showPostDeleteDialog}
+          onOpenChange={setShowPostDeleteDialog}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Confirm Delete</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to delete this post? This action cannot be
+                undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={confirmDeletePost}
+                disabled={deletePost.isPending}
+              >
+                {deletePost.isPending ? "Deleting..." : "Delete"}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

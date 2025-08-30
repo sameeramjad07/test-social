@@ -44,6 +44,7 @@ import {
   ChevronRight,
   Brain,
   Clock,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -220,7 +221,14 @@ export default function AIUsageLogs() {
   };
 
   if (logsLoading || workspacesLoading) {
-    return <div>Loading AI logs...</div>;
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+        <p className="ml-2 text-slate-600 dark:text-slate-400">
+          Loading AI Logs...
+        </p>
+      </div>
+    );
   }
 
   if (logsError) {

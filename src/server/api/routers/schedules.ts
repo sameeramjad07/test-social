@@ -125,32 +125,96 @@ export const schedulesRouter = createTRPCRouter({
           posts: {
             select: {
               id: true,
+              content: true,
               status: true,
+              images: {
+                select: {
+                  url: true,
+                },
+                take: 1, // Only fetch the first image for each post
+                orderBy: { order: "asc" },
+              },
+            },
+            take: 2, // Limit to 2 posts for preview
+            orderBy: { scheduledAt: "asc" },
+          },
+          _count: {
+            select: {
+              posts: {
+                where: {
+                  status: {
+                    in: [PostStatus.APPROVED, PostStatus.SCHEDULED],
+                  },
+                },
+              },
             },
           },
         },
       });
 
-      return schedules.map((schedule) => ({
-        id: schedule.id,
-        name: schedule.name,
-        description: schedule.description,
-        platforms: schedule.platforms,
-        startDate: schedule.startDate,
-        endDate: schedule.endDate,
-        duration: schedule.endDate
-          ? Math.ceil(
-              (schedule.endDate.getTime() - schedule.startDate.getTime()) /
-                (1000 * 60 * 60 * 24)
-            )
-          : null,
-        durationType: "days",
-        frequency: schedule.frequency.toLowerCase(),
-        isActive: schedule.isActive,
-        createdAt: schedule.createdAt,
-        postsGenerated: schedule.posts.length,
-        totalPosts: schedule.postsPerSlot * schedule.timeSlots.length,
-      }));
+      return schedules.map((schedule) => {
+        // Calculate total posts based on schedule configuration
+        let datesCount = 0;
+        let current = new Date(schedule.startDate);
+        const end = schedule.endDate
+          ? new Date(schedule.endDate)
+          : new Date(current.getTime() + 30 * 24 * 60 * 60 * 1000); // Default 30 days
+        while (current <= end) {
+          let include = false;
+          const dayOfWeek = current.getDay();
+          const dayOfMonth = current.getDate();
+          switch (schedule.frequency) {
+            case ScheduleFrequency.DAILY:
+              include = true;
+              break;
+            case ScheduleFrequency.WEEKLY:
+              if (schedule.weekDays.includes(dayOfWeek)) include = true;
+              break;
+            case ScheduleFrequency.MONTHLY:
+              if (schedule.monthDays.includes(dayOfMonth)) include = true;
+              break;
+            case ScheduleFrequency.CUSTOM:
+              if (
+                schedule.weekDays.includes(dayOfWeek) ||
+                schedule.monthDays.includes(dayOfMonth)
+              )
+                include = true;
+              break;
+          }
+          if (include) datesCount++;
+          current.setDate(current.getDate() + 1);
+        }
+        const totalPosts =
+          schedule.postsPerSlot * schedule.timeSlots.length * datesCount;
+
+        return {
+          id: schedule.id,
+          name: schedule.name,
+          description: schedule.description,
+          platforms: schedule.platforms,
+          startDate: schedule.startDate,
+          endDate: schedule.endDate,
+          duration: schedule.endDate
+            ? Math.ceil(
+                (schedule.endDate.getTime() - schedule.startDate.getTime()) /
+                  (1000 * 60 * 60 * 24)
+              )
+            : null,
+          durationType: "days",
+          frequency: schedule.frequency.toLowerCase(),
+          isActive: schedule.isActive,
+          createdAt: schedule.createdAt,
+          postsGenerated: schedule.posts.length,
+          approvedPosts: schedule._count.posts,
+          totalPosts,
+          posts: schedule.posts.map((post) => ({
+            id: post.id,
+            content: post.content,
+            status: post.status,
+            images: post.images,
+          })),
+        };
+      });
     }),
 
   activeList: protectedProcedure
@@ -376,22 +440,20 @@ export const schedulesRouter = createTRPCRouter({
           hashtags: scheduleData.hashtags || [],
           weekDays: scheduleData.weekDays || [],
           monthDays: scheduleData.monthDays || [],
+          isActive: false, // New schedules are inactive by default
         },
       });
 
       return {
-        success: true,
-        schedule: {
-          id: schedule.id,
-          name: schedule.name,
-          description: schedule.description,
-          platforms: schedule.platforms,
-          startDate: schedule.startDate,
-          endDate: schedule.endDate,
-          frequency: schedule.frequency,
-          isActive: schedule.isActive,
-          createdAt: schedule.createdAt,
-        },
+        id: schedule.id,
+        name: schedule.name,
+        description: schedule.description,
+        platforms: schedule.platforms,
+        startDate: schedule.startDate,
+        endDate: schedule.endDate,
+        frequency: schedule.frequency,
+        isActive: schedule.isActive,
+        createdAt: schedule.createdAt,
       };
     }),
 
@@ -598,10 +660,17 @@ export const schedulesRouter = createTRPCRouter({
         });
       }
 
-      await ctx.db.postSchedule.update({
-        where: { id: scheduleId },
-        data: { isActive: true },
-      });
+      // ✅ Activate schedule and mark all posts as SCHEDULED
+      await ctx.db.$transaction([
+        ctx.db.postSchedule.update({
+          where: { id: scheduleId },
+          data: { isActive: true },
+        }),
+        ctx.db.post.updateMany({
+          where: { scheduleId, workspaceId },
+          data: { status: PostStatus.SCHEDULED },
+        }),
+      ]);
 
       return { success: true };
     }),

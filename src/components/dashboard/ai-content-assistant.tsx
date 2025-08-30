@@ -13,20 +13,27 @@ import { Badge } from "@/components/ui/badge";
 import { Loader2, FileText, Play, Plus, Sparkles } from "lucide-react";
 import { ScheduleCard } from "./schedule-card";
 import { toast } from "sonner";
-import { Platform } from "@prisma/client";
+import { Platform, PostStatus } from "@prisma/client";
 
 interface Schedule {
   id: string;
   name: string;
   platforms: Platform[];
   duration: number | null;
-  durationType: "days";
+  durationType: string;
   frequency: string;
   isActive: boolean;
   createdAt: Date;
   postsGenerated: number;
+  approvedPosts: number;
   totalPosts: number;
   description?: string | null;
+  posts: {
+    id: string;
+    content: string;
+    status: PostStatus;
+    images: { url: string }[];
+  }[];
 }
 
 interface AIContentAssistantProps {
@@ -154,7 +161,7 @@ export function AIContentAssistant({
           </div>
           <Button
             onClick={onCreateSchedule}
-            className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
+            className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 cursor-pointer"
           >
             <Plus className="w-4 h-4 mr-2" />
             New Schedule

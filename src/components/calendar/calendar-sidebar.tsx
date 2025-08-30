@@ -28,8 +28,9 @@ import {
   Instagram,
   Facebook,
   Linkedin,
+  Twitter,
 } from "lucide-react";
-import { PostStatus } from "@prisma/client";
+import { PostStatus, Platform } from "@prisma/client";
 import { toast } from "sonner";
 
 interface CalendarSidebarProps {
@@ -46,6 +47,7 @@ export function CalendarSidebar({
   const { data: scheduledPosts } = api.posts.list.useQuery({
     workspaceId,
     scheduled: true,
+    status: PostStatus.SCHEDULED,
   });
 
   const { data: schedules } = api.schedules.list.useQuery({
@@ -53,9 +55,15 @@ export function CalendarSidebar({
   });
 
   const platforms = [
-    { name: "Instagram", icon: Instagram, color: "bg-pink-500" },
-    { name: "Facebook", icon: Facebook, color: "bg-blue-600" },
-    { name: "LinkedIn", icon: Linkedin, color: "bg-blue-700" },
+    {
+      name: Platform.INSTAGRAM,
+      icon: Instagram,
+      color: "bg-gradient-to-br from-pink-500 to-purple-500",
+    },
+    { name: Platform.FACEBOOK, icon: Facebook, color: "bg-blue-600" },
+    { name: Platform.LINKEDIN, icon: Linkedin, color: "bg-blue-700" },
+    { name: Platform.TWITTER, icon: Twitter, color: "bg-blue-500" },
+    { name: Platform.TIKTOK, icon: Instagram, color: "bg-black" }, // Placeholder icon for TikTok
   ];
 
   const todaysPosts =
@@ -65,7 +73,6 @@ export function CalendarSidebar({
 
   return (
     <div className="space-y-6">
-      {/* Today's Posts */}
       <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm dark:bg-slate-900/80">
         <CardHeader>
           <CardTitle className="text-lg">Today's Schedule</CardTitle>
@@ -76,16 +83,27 @@ export function CalendarSidebar({
             {todaysPosts.map((post) => {
               const platform = platforms.find((p) =>
                 post.socialAccounts?.some(
-                  (account: { platform: string }) => account.platform === p.name
+                  (account: { platform: Platform }) =>
+                    account.platform === p.name
                 )
               );
+              const platformDisplayName = platform
+                ? platform.name.charAt(0).toUpperCase() +
+                  platform.name.slice(1).toLowerCase()
+                : "Unknown Platform";
               return (
                 <div key={post.id} className="p-3 border rounded-lg">
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
-                      {platform && <platform.icon className="w-4 h-4" />}
+                      {platform && (
+                        <div
+                          className={`w-6 h-6 ${platform.color} rounded flex items-center justify-center`}
+                        >
+                          <platform.icon className="w-4 h-4 text-white" />
+                        </div>
+                      )}
                       <span className="text-sm font-medium">
-                        {platform?.name || "Unknown Platform"}
+                        {platformDisplayName}
                       </span>
                       <Badge
                         variant={
@@ -151,7 +169,6 @@ export function CalendarSidebar({
         </CardContent>
       </Card>
 
-      {/* Active Schedules */}
       <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm dark:bg-slate-900/80">
         <CardHeader>
           <CardTitle className="text-lg">Post Schedules</CardTitle>
@@ -202,7 +219,6 @@ export function CalendarSidebar({
         </CardContent>
       </Card>
 
-      {/* Quick Stats */}
       <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm dark:bg-slate-900/80">
         <CardHeader>
           <CardTitle className="text-lg">Quick Stats</CardTitle>
@@ -216,7 +232,7 @@ export function CalendarSidebar({
               <span className="font-medium">
                 {
                   scheduledPosts?.filter(
-                    (p) => p.status === ("scheduled" as PostStatus)
+                    (p) => p.status === PostStatus.SCHEDULED
                   ).length
                 }
               </span>

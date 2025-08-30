@@ -15,6 +15,7 @@ import {
   Calendar,
   TrendingUp,
   Activity,
+  Loader2,
 } from "lucide-react";
 import {
   LineChart,
@@ -50,7 +51,14 @@ export default function Dashboard() {
     generationTypeLoading ||
     workspaceActivityLoading
   ) {
-    return <div>Loading dashboard...</div>;
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+        <p className="ml-2 text-slate-600 dark:text-slate-400">
+          Loading Admin dashboard...
+        </p>
+      </div>
+    );
   }
 
   return (

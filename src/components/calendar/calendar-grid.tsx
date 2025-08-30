@@ -60,10 +60,9 @@ export function CalendarGrid({
   const getPostsForDate = (date: Date) => {
     return scheduledPosts.filter((post) => {
       if (!post.scheduledAt) return false;
-      // Check if both content and images are approved
-      const isApproved = post.contentApproved && post.imagesApproved;
       return (
-        post.scheduledAt.toDateString() === date.toDateString() && isApproved
+        post.status === "SCHEDULED" &&
+        post.scheduledAt.toDateString() === date.toDateString()
       );
     });
   };

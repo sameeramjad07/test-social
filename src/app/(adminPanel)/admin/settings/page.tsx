@@ -43,6 +43,7 @@ import {
   Upload,
   Save,
   AlertTriangle,
+  Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -226,7 +227,14 @@ export default function Settings() {
   };
 
   if (rolesLoading || permissionsLoading) {
-    return <div>Loading settings...</div>;
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+        <p className="ml-2 text-slate-600 dark:text-slate-400">
+          Loading Settings...
+        </p>
+      </div>
+    );
   }
 
   return (

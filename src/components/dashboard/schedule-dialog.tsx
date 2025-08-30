@@ -32,7 +32,8 @@ import {
   Trash,
 } from "lucide-react";
 import { toast } from "sonner";
-import { format } from "date-fns";
+import { format, addDays, isAfter } from "date-fns";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 interface ScheduleCreationDialogProps {
@@ -46,19 +47,20 @@ export function ScheduleCreationDialog({
   onOpenChange,
   workspaceId,
 }: ScheduleCreationDialogProps) {
+  const router = useRouter();
+  const utils = api.useUtils();
   const [newSchedule, setNewSchedule] = useState({
     name: "",
     description: "",
     platforms: [] as Platform[],
     startDate: format(new Date(), "yyyy-MM-dd"),
-    endDate: "",
+    endDate: format(addDays(new Date(), 30), "yyyy-MM-dd"),
     frequency: "DAILY" as ScheduleFrequency,
     weekDays: [] as number[],
     monthDays: [] as number[],
     timeSlots: ["12:00"] as string[],
     postsPerSlot: 1,
-    contentPrompt: "" as string | undefined,
-    imagePrompt: "" as string | undefined,
+    contentPrompt: "",
     hashtags: [] as string[],
     isActive: false,
   });
@@ -68,31 +70,40 @@ export function ScheduleCreationDialog({
     { enabled: !!workspaceId }
   );
 
-  const createMutation = api.schedules.create.useMutation({
-    onSuccess: () => {
-      toast.success("Schedule created successfully!");
+  const createMutation = api.schedules.create.useMutation();
+  const generateBulkPosts = api.posts.generateBulkPosts.useMutation();
+
+  const handleSuccess = async (data: { id: string }) => {
+    try {
+      await generateBulkPosts.mutateAsync({
+        scheduleId: data.id,
+        workspaceId,
+        prompt: newSchedule.contentPrompt,
+      });
+      toast.success("Schedule and posts created successfully!");
+      // Invalidate schedules list
+      await utils.schedules.list.invalidate({ workspaceId });
+      router.push(`/workspace/${workspaceId}/schedule/${data.id}`);
       onOpenChange(false);
       setNewSchedule({
         name: "",
         description: "",
         platforms: [],
         startDate: format(new Date(), "yyyy-MM-dd"),
-        endDate: "",
+        endDate: format(addDays(new Date(), 30), "yyyy-MM-dd"),
         frequency: "DAILY",
         weekDays: [],
         monthDays: [],
         timeSlots: ["12:00"],
         postsPerSlot: 1,
         contentPrompt: "",
-        imagePrompt: "",
         hashtags: [],
         isActive: false,
       });
-      const trpcContext = api.useContext();
-      trpcContext.schedules.list.invalidate({ workspaceId });
-    },
-    onError: (error) => toast.error(error.message),
-  });
+    } catch (error) {
+      toast.error("Failed to generate posts: " + (error as Error).message);
+    }
+  };
 
   const platformIcons = {
     INSTAGRAM: { icon: Instagram, color: "bg-pink-500" },
@@ -106,6 +117,38 @@ export function ScheduleCreationDialog({
     { value: "MONTHLY", label: "Monthly" },
     { value: "CUSTOM", label: "Custom" },
   ];
+
+  const calculateTotalPosts = () => {
+    let datesCount = 0;
+    let current = new Date(newSchedule.startDate);
+    const end = new Date(newSchedule.endDate);
+    while (!isAfter(current, end)) {
+      let include = false;
+      const dayOfWeek = current.getDay();
+      const dayOfMonth = current.getDate();
+      switch (newSchedule.frequency) {
+        case "DAILY":
+          include = true;
+          break;
+        case "WEEKLY":
+          if (newSchedule.weekDays.includes(dayOfWeek)) include = true;
+          break;
+        case "MONTHLY":
+          if (newSchedule.monthDays.includes(dayOfMonth)) include = true;
+          break;
+        case "CUSTOM":
+          if (
+            newSchedule.weekDays.includes(dayOfWeek) ||
+            newSchedule.monthDays.includes(dayOfMonth)
+          )
+            include = true;
+          break;
+      }
+      if (include) datesCount++;
+      current = addDays(current, 1);
+    }
+    return newSchedule.postsPerSlot * newSchedule.timeSlots.length * datesCount;
+  };
 
   const handlePlatformToggle = (platform: Platform) => {
     setNewSchedule((prev) => ({
@@ -160,29 +203,62 @@ export function ScheduleCreationDialog({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newSchedule.name || newSchedule.platforms.length === 0) {
-      toast.error("Please fill in all required fields");
+    if (
+      !newSchedule.name ||
+      newSchedule.platforms.length === 0 ||
+      !newSchedule.contentPrompt ||
+      !newSchedule.endDate
+    ) {
+      toast.error(
+        "Please fill in all required fields (name, platforms, content prompt, end date)"
+      );
       return;
     }
-
-    createMutation.mutate({
-      workspaceId,
-      name: newSchedule.name,
-      description: newSchedule.description || undefined,
-      platforms: newSchedule.platforms,
-      startDate: newSchedule.startDate,
-      endDate: newSchedule.endDate
-        ? format(new Date(newSchedule.endDate), "yyyy-MM-dd")
-        : undefined,
-      frequency: newSchedule.frequency,
-      weekDays: newSchedule.weekDays,
-      monthDays: newSchedule.monthDays,
-      timeSlots: newSchedule.timeSlots,
-      postsPerSlot: newSchedule.postsPerSlot,
-      contentPrompt: newSchedule.contentPrompt || undefined,
-      imagePrompt: newSchedule.imagePrompt || undefined,
-      hashtags: newSchedule.hashtags,
-    });
+    if (
+      (newSchedule.frequency === "WEEKLY" ||
+        newSchedule.frequency === "CUSTOM") &&
+      newSchedule.weekDays.length === 0
+    ) {
+      toast.error(
+        "Please select at least one weekday for WEEKLY or CUSTOM frequency"
+      );
+      return;
+    }
+    if (
+      (newSchedule.frequency === "MONTHLY" ||
+        newSchedule.frequency === "CUSTOM") &&
+      newSchedule.monthDays.length === 0
+    ) {
+      toast.error(
+        "Please select at least one month day for MONTHLY or CUSTOM frequency"
+      );
+      return;
+    }
+    if (new Date(newSchedule.startDate) > new Date(newSchedule.endDate)) {
+      toast.error("End date must be after start date");
+      return;
+    }
+    createMutation.mutate(
+      {
+        workspaceId,
+        name: newSchedule.name,
+        description: newSchedule.description || undefined,
+        platforms: newSchedule.platforms,
+        startDate: newSchedule.startDate,
+        endDate: format(new Date(newSchedule.endDate), "yyyy-MM-dd"),
+        frequency: newSchedule.frequency,
+        weekDays: newSchedule.weekDays,
+        monthDays: newSchedule.monthDays,
+        timeSlots: newSchedule.timeSlots,
+        postsPerSlot: newSchedule.postsPerSlot,
+        contentPrompt: newSchedule.contentPrompt,
+        hashtags: newSchedule.hashtags,
+      },
+      {
+        onSuccess: handleSuccess,
+        onError: (error) => toast.error(error.message),
+      }
+    );
   };
 
   return (
@@ -307,7 +383,7 @@ export function ScheduleCreationDialog({
               </div>
               <div className="space-y-1">
                 <Label htmlFor="end-date" className="text-sm">
-                  End Date (Optional)
+                  End Date *
                 </Label>
                 <Input
                   id="end-date"
@@ -317,6 +393,7 @@ export function ScheduleCreationDialog({
                     setNewSchedule({ ...newSchedule, endDate: e.target.value })
                   }
                   className="text-sm"
+                  required
                 />
               </div>
             </div>
@@ -348,7 +425,7 @@ export function ScheduleCreationDialog({
             {(newSchedule.frequency === "WEEKLY" ||
               newSchedule.frequency === "CUSTOM") && (
               <div className="space-y-1">
-                <Label className="text-sm">Week Days</Label>
+                <Label className="text-sm">Week Days *</Label>
                 <div className="flex gap-2 flex-wrap">
                   {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(
                     (day, index) => (
@@ -368,7 +445,7 @@ export function ScheduleCreationDialog({
             {(newSchedule.frequency === "MONTHLY" ||
               newSchedule.frequency === "CUSTOM") && (
               <div className="space-y-1">
-                <Label className="text-sm">Month Days</Label>
+                <Label className="text-sm">Month Days *</Label>
                 <div className="grid grid-cols-7 gap-1">
                   {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (
                     <div key={day} className="flex items-center space-x-1">
@@ -418,10 +495,29 @@ export function ScheduleCreationDialog({
               </Button>
             </div>
 
-            {/* AI Prompts */}
+            <div className="space-y-1">
+              <Label htmlFor="posts-per-slot" className="text-sm">
+                Posts per Slot *
+              </Label>
+              <Input
+                id="posts-per-slot"
+                type="number"
+                min="1"
+                value={newSchedule.postsPerSlot}
+                onChange={(e) =>
+                  setNewSchedule((prev) => ({
+                    ...prev,
+                    postsPerSlot: parseInt(e.target.value) || 1,
+                  }))
+                }
+                className="text-sm"
+                required
+              />
+            </div>
+
             <div className="space-y-1">
               <Label htmlFor="content-prompt" className="text-sm">
-                Content Prompt (Optional)
+                Content Prompt *
               </Label>
               <Textarea
                 id="content-prompt"
@@ -433,30 +529,12 @@ export function ScheduleCreationDialog({
                   })
                 }
                 placeholder="e.g., Write engaging posts about our new AI features..."
-                rows={2}
+                rows={4}
                 className="text-sm"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="image-prompt" className="text-sm">
-                Image Prompt (Optional)
-              </Label>
-              <Textarea
-                id="image-prompt"
-                value={newSchedule.imagePrompt}
-                onChange={(e) =>
-                  setNewSchedule({
-                    ...newSchedule,
-                    imagePrompt: e.target.value,
-                  })
-                }
-                placeholder="e.g., Generate images of futuristic tech interfaces..."
-                rows={2}
-                className="text-sm"
+                required
               />
             </div>
 
-            {/* Hashtags */}
             <div className="space-y-1">
               <Label htmlFor="hashtags" className="text-sm">
                 Hashtags (Optional)
@@ -478,10 +556,12 @@ export function ScheduleCreationDialog({
               />
             </div>
 
-            {/* Preview */}
             <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-lg">
               <h4 className="font-medium text-sm mb-2">Schedule Preview</h4>
               <div className="text-sm text-slate-600 dark:text-slate-400 space-y-1">
+                <p>
+                  <strong>Total Posts:</strong> {calculateTotalPosts()}
+                </p>
                 <p>
                   <strong>Platforms:</strong>{" "}
                   {newSchedule.platforms.join(", ") || "None selected"}
@@ -490,8 +570,7 @@ export function ScheduleCreationDialog({
                   <strong>Start Date:</strong> {newSchedule.startDate}
                 </p>
                 <p>
-                  <strong>End Date:</strong>{" "}
-                  {newSchedule.endDate || "Not specified"}
+                  <strong>End Date:</strong> {newSchedule.endDate}
                 </p>
                 <p>
                   <strong>Frequency:</strong>{" "}
@@ -500,8 +579,28 @@ export function ScheduleCreationDialog({
                   )?.label || newSchedule.frequency}
                 </p>
                 <p>
+                  <strong>Week Days:</strong>{" "}
+                  {newSchedule.weekDays
+                    .map(
+                      (d) =>
+                        ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]
+                    )
+                    .join(", ") || "None"}
+                </p>
+                <p>
+                  <strong>Month Days:</strong>{" "}
+                  {newSchedule.monthDays.join(", ") || "None"}
+                </p>
+                <p>
                   <strong>Time Slots:</strong>{" "}
                   {newSchedule.timeSlots.join(", ")}
+                </p>
+                <p>
+                  <strong>Posts per Slot:</strong> {newSchedule.postsPerSlot}
+                </p>
+                <p>
+                  <strong>Content Prompt:</strong>{" "}
+                  {newSchedule.contentPrompt || "Not specified"}
                 </p>
               </div>
             </div>
@@ -518,9 +617,15 @@ export function ScheduleCreationDialog({
             <Button
               type="submit"
               className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-sm"
-              disabled={createMutation.isPending || isLoading}
+              disabled={
+                createMutation.isPending ||
+                isLoading ||
+                generateBulkPosts.isPending
+              }
             >
-              {createMutation.isPending ? "Creating..." : "Create Schedule"}
+              {createMutation.isPending || generateBulkPosts.isPending
+                ? "Creating..."
+                : "Create Schedule and Generate Posts"}
             </Button>
           </DialogFooter>
         </form>
