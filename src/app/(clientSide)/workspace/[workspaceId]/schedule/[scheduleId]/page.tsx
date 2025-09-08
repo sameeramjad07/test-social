@@ -103,6 +103,7 @@ export default function ScheduleEditorPage() {
 
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [bulkPrompt, setBulkPrompt] = useState("");
+  const [imageProgress, setImageProgress] = useState<number>(0);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showPostDeleteDialog, setShowPostDeleteDialog] = useState(false);
   const [postToDelete, setPostToDelete] = useState<string | null>(null);
@@ -217,19 +218,36 @@ export default function ScheduleEditorPage() {
 
   const handleGenerateImagesForAllPosts = async () => {
     try {
+      setImageProgress(10); // start
+
       await generateImagesForAllPosts.mutateAsync({ scheduleId, workspaceId });
+
+      setImageProgress(30); // request sent
+
       const interval = setInterval(() => {
         refetchProgress();
+
+        if (progress?.completed && progress?.total) {
+          const percent = Math.round(
+            (progress.completed / progress.total) * 100
+          );
+          setImageProgress(Math.max(30, Math.min(percent, 95))); // smooth update
+        }
+
         if (progress?.completed === progress?.total) {
           clearInterval(interval);
+          setImageProgress(100);
           toast.success("Image generation completed for all posts");
           router.refresh();
+
+          setTimeout(() => setImageProgress(0), 800); // reset after short delay
         }
-      }, 5000);
+      }, 2000);
     } catch (error) {
       toast.error(
         "Failed to start image generation process: " + (error as Error).message
       );
+      setImageProgress(0);
     }
   };
 
@@ -475,6 +493,16 @@ export default function ScheduleEditorPage() {
                 <Progress value={completionPercentage} className="h-2" />
               </div>
             )}
+            {imageProgress > 0 && (
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span>Image Generation Progress</span>
+                  <span>{imageProgress}%</span>
+                </div>
+                <Progress value={imageProgress} className="h-2" />
+              </div>
+            )}
+
             {schedule.posts.length > 0 && (
               <div className="space-y-4">
                 <div className="flex justify-between items-center">

@@ -75,7 +75,7 @@ export const authConfig: NextAuthConfig = {
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) {
-          return null;
+          throw new Error("Missing email or password");
         }
 
         try {
@@ -98,8 +98,14 @@ export const authConfig: NextAuthConfig = {
             },
           });
 
-          if (!user || !user.hashedPassword) {
-            return null;
+          if (!user) {
+            throw new Error("No user found with this email");
+          }
+
+          if (!user.hashedPassword) {
+            throw new Error(
+              "This account uses OAuth. Please sign in with Google or GitHub."
+            );
           }
 
           const isPasswordValid = await compare(
@@ -108,7 +114,7 @@ export const authConfig: NextAuthConfig = {
           );
 
           if (!isPasswordValid) {
-            return null;
+            throw new Error("Invalid password");
           }
 
           // Extract the actual workspace objects from the WorkspaceMember relation
@@ -124,7 +130,9 @@ export const authConfig: NextAuthConfig = {
           };
         } catch (error) {
           console.error("Authentication error:", error);
-          return null;
+          throw new Error(
+            error instanceof Error ? error.message : "Authentication failed"
+          );
         }
       },
     }),

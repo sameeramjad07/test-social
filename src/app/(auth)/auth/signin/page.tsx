@@ -47,7 +47,22 @@ export default function SignInPage() {
       });
 
       if (result?.error) {
-        toast.error(result.error || "Invalid credentials. Please try again.");
+        // Map specific error messages to user-friendly versions
+        let errorMessage =
+          "An error occurred during sign-in. Please try again.";
+        if (result.error.includes("No user found")) {
+          errorMessage = "No account exists with this email.";
+        } else if (result.error.includes("Invalid password")) {
+          errorMessage = "Incorrect password. Please try again.";
+        } else if (result.error.includes("OAuth")) {
+          errorMessage =
+            "This account uses Google or GitHub. Please use the respective sign-in option.";
+        } else if (result.error.includes("Missing email or password")) {
+          errorMessage = "Please provide both email and password.";
+        }
+
+        toast.error(errorMessage);
+        return;
       } else {
         toast.success("Welcome back!");
         router.push("/dashboard");
