@@ -49,12 +49,13 @@ export function ScheduleCreationDialog({
 }: ScheduleCreationDialogProps) {
   const router = useRouter();
   const utils = api.useUtils();
+  const [progress, setProgress] = useState<number>(0);
   const [newSchedule, setNewSchedule] = useState({
     name: "",
     description: "",
     platforms: [] as Platform[],
     startDate: format(new Date(), "yyyy-MM-dd"),
-    endDate: format(addDays(new Date(), 30), "yyyy-MM-dd"),
+    endDate: format(addDays(new Date(), 10), "yyyy-MM-dd"),
     frequency: "DAILY" as ScheduleFrequency,
     weekDays: [] as number[],
     monthDays: [] as number[],
@@ -75,11 +76,20 @@ export function ScheduleCreationDialog({
 
   const handleSuccess = async (data: { id: string }) => {
     try {
+      setProgress(30); // schedule created
+
+      // Start generating posts
+      setProgress(60);
+      toast.success("Schedule created. Generating posts...");
       await generateBulkPosts.mutateAsync({
         scheduleId: data.id,
         workspaceId,
         prompt: newSchedule.contentPrompt,
       });
+
+      setProgress(80); // posts generating (midway)
+      await new Promise((resolve) => setTimeout(resolve, 500)); // simulate step delay
+      setProgress(100); // done
       toast.success("Schedule and posts created successfully!");
       // Invalidate schedules list
       await utils.schedules.list.invalidate({ workspaceId });
@@ -100,6 +110,7 @@ export function ScheduleCreationDialog({
         hashtags: [],
         isActive: false,
       });
+      setTimeout(() => setProgress(0), 800); // hide bar after short delay
     } catch (error) {
       toast.error("Failed to generate posts: " + (error as Error).message);
     }
@@ -238,6 +249,7 @@ export function ScheduleCreationDialog({
       toast.error("End date must be after start date");
       return;
     }
+    setProgress(10); // Start progress
     createMutation.mutate(
       {
         workspaceId,
@@ -256,7 +268,10 @@ export function ScheduleCreationDialog({
       },
       {
         onSuccess: handleSuccess,
-        onError: (error) => toast.error(error.message),
+        onError: (error) => {
+          toast.error(error.message);
+          setProgress(0);
+        },
       }
     );
   };
@@ -605,6 +620,21 @@ export function ScheduleCreationDialog({
               </div>
             </div>
           </div>
+          {(createMutation.isPending ||
+            generateBulkPosts.isPending ||
+            progress > 0) && (
+            <div className="w-full mt-4">
+              <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden relative">
+                <div
+                  className="bg-gradient-to-r from-blue-600 to-purple-600 h-3 transition-all duration-500"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+              <p className="text-sm text-gray-600 mt-1 text-center">
+                {progress}%
+              </p>
+            </div>
+          )}
           <DialogFooter className="mt-4">
             <Button
               variant="outline"
