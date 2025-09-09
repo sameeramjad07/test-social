@@ -82,27 +82,41 @@ export const workspacesRouter = createTRPCRouter({
           },
         });
 
-        // Get system owner role
-        const ownerRole = await tx.role.findFirst({
-          where: { name: "owner", isSystem: true },
-        });
-
-        if (!ownerRole) {
-          throw new TRPCError({
-            code: "INTERNAL_SERVER_ERROR",
-            message: "System owner role not found",
-          });
-        }
-
         if (!ctx.session.user.id) {
           throw new TRPCError({ code: "UNAUTHORIZED" });
         }
 
-        // Add user as owner
+        // Get system owner role
+        let ownerRole = await tx.role.findFirst({
+          where: { name: "owner", isSystem: true },
+        });
+
+        if (!ownerRole) {
+          ownerRole = await tx.role.create({
+            data: {
+              name: "owner",
+              description: "Full access to all workspace features",
+              isSystem: true,
+            },
+          });
+
+          // Assign all permissions to owner role
+          const allPermissions = await tx.permission.findMany();
+          if (allPermissions.length > 0) {
+            await tx.rolePermission.createMany({
+              data: allPermissions.map((permission) => ({
+                roleId: ownerRole!.id,
+                permissionId: permission.id,
+              })),
+            });
+          }
+        }
+
+        // Add current user as owner of the new workspace
         await tx.workspaceMember.create({
           data: {
             workspaceId: workspace.id,
-            userId: ctx.session.user.id!,
+            userId: ctx.session.user.id,
             roleId: ownerRole.id,
           },
         });
