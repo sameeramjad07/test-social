@@ -22,7 +22,7 @@ export default function DashboardRedirect() {
       localStorage.setItem("currentWorkspaceId", defaultId);
       router.push(`/workspace/${defaultId}/dashboard`);
     } else {
-      router.push("/workspaces");
+      router.push("/workspace");
     }
   }, [session, router]);
 
