@@ -18,6 +18,7 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
 import { Plus, Edit, Trash, Settings } from "lucide-react";
+import { UploadButton } from "@/lib/uploadthing";
 
 export default function WorkspacesPage() {
   const { data: session, status } = useSession();
@@ -27,6 +28,7 @@ export default function WorkspacesPage() {
   const [editWorkspaceId, setEditWorkspaceId] = useState<string | null>(null);
   const [editWorkspaceName, setEditWorkspaceName] = useState("");
   const [newWorkspaceName, setNewWorkspaceName] = useState("");
+  const [newWorkspaceLogo, setNewWorkspaceLogo] = useState<string>("");
 
   const { data: workspaces, refetch } =
     api.workspaces.getUserWorkspaces.useQuery(undefined, {
@@ -85,7 +87,10 @@ export default function WorkspacesPage() {
       toast.error("Workspace name is required");
       return;
     }
-    createMutation.mutate({ name: newWorkspaceName });
+    createMutation.mutate({
+      name: newWorkspaceName,
+      logoUrl: newWorkspaceLogo || undefined,
+    });
   };
 
   const handleUpdate = () => {
@@ -138,6 +143,60 @@ export default function WorkspacesPage() {
                   placeholder="Enter workspace name"
                   className="bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
                 />
+                <Label htmlFor="logo">Workspace Logo</Label>
+                <Input
+                  id="logo"
+                  type="text"
+                  value={
+                    newWorkspaceLogo.startsWith("http") ? newWorkspaceLogo : ""
+                  }
+                  onChange={(e) => setNewWorkspaceLogo(e.target.value)}
+                  placeholder="Paste logo URL"
+                  disabled={
+                    !!newWorkspaceLogo && !newWorkspaceLogo.startsWith("http")
+                  }
+                  className="bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
+                />
+
+                <UploadButton
+                  endpoint="imageUploader"
+                  appearance={{
+                    button:
+                      "bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md mt-2",
+                  }}
+                  disabled={
+                    !!newWorkspaceLogo && newWorkspaceLogo.startsWith("http")
+                  }
+                  onClientUploadComplete={(res) => {
+                    if (res && res[0]?.url) {
+                      setNewWorkspaceLogo(res[0].url);
+                      toast.success("Logo uploaded!");
+                    }
+                  }}
+                  onUploadError={(error: Error) => {
+                    toast.error(`Upload failed: ${error.message}`);
+                  }}
+                />
+
+                {/* Preview after upload */}
+                {newWorkspaceLogo && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <img
+                      src={newWorkspaceLogo}
+                      alt="Workspace Logo"
+                      className="h-16 w-16 rounded-lg border object-cover"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setNewWorkspaceLogo("")}
+                    >
+                      Clear
+                    </Button>
+                  </div>
+                )}
+
                 <Button
                   onClick={handleCreate}
                   disabled={createMutation.isPending}

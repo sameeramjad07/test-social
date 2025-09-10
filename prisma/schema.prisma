@@ -28,7 +28,8 @@ model Workspace {
     schedules       PostSchedule[]
     templates       PostTemplate[]
     roles           Role[]
-    aiGenerations   AIGenerationLog[] // Added relation
+    aiGenerations   AIGenerationLog[]
+    usedStores      UsedStore[]
     
     @@index([slug])
     @@map("workspaces")
@@ -180,6 +181,10 @@ model Post {
     // AI Generation
     aiPrompt        String?     @db.Text @map("ai_prompt")
     aiModel         String?     @map("ai_model")
+
+    // Store integration fields (For Promowaves Only)
+    storeName String? @map("store_name") // Add field to track store used for this post
+  storeUrl String? @map("store_url") // Add field to track store URL
     
     // Metadata
     createdAt       DateTime    @default(now()) @map("created_at")
@@ -348,10 +353,10 @@ model PostSchedule {
     // Relations
     workspace         Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
     posts             Post[]
-
     progress          PostGenerationProgress?  @relation("ScheduleProgress")
     jobs              PostGenerationJob[]      @relation("ScheduleJobs")
     aiGenerations     AIGenerationLog[]
+    usedStores      UsedStore[]
     
     @@index([workspaceId, isActive])
     @@map("post_schedules")
@@ -429,6 +434,26 @@ model AIGenerationLog {
   @@index([createdAt])
   @@map("ai_generation_logs")
 }
+
+// ========== Usage of Stores from Promowaves ============
+
+model UsedStore {
+  id String @id @default(cuid())
+  workspaceId String @map("workspace_id")
+  scheduleId String? @map("schedule_id")
+  storeName String @map("store_name") // Store name from API
+  storeUrl String @map("store_url") // Store displayUrl
+  createdAt DateTime @default(now()) @map("created_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  schedule PostSchedule? @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, storeName, scheduleId])
+  @@index([workspaceId])
+  @@index([scheduleId])
+  @@map("used_stores")
+}
+
 // ========== NEXT-AUTH MODELS ==========
 
 model Account {
