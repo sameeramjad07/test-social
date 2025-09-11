@@ -53,7 +53,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import EditScheduleDialog from "@/components/schedule/EditScheduleDialog";
 
-const PROMOWAVES_WORKSPACE_ID = "cmfcejqiw003go25g2vwaqiia";
+// const PROMOWAVES_WORKSPACE_ID = "cmfcejqiw003go25g2vwaqiia"; // PostWaves Promowaves ID
+const PROMOWAVES_WORKSPACE_ID = "cmdyoea02003f5d05xo4gpw8h"; // Promowaves ID in Neon DB
 
 function PreviewImage({ src, alt }: { src?: string | null; alt?: string }) {
   const FALLBACK = "/no-image.jpg";

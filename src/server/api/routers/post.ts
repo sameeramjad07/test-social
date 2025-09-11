@@ -749,6 +749,7 @@ export const postsRouter = createTRPCRouter({
 
           for (let i = 0; i < schedule.postsPerSlot; i++) {
             const postIndex = completed + 1;
+            const start = Date.now();
             const contentResponse = await openai.chat.completions.create({
               model: "gpt-4o-mini",
               messages: [
@@ -782,6 +783,8 @@ export const postsRouter = createTRPCRouter({
               max_tokens: 500,
             });
 
+            const duration = (Date.now() - start) / 1000; // in seconds
+
             let parsed: {
               content: string;
               hashtags: string[];
@@ -808,7 +811,7 @@ export const postsRouter = createTRPCRouter({
             parsed.hashtags.forEach((h) => usedHashtags.add(h));
 
             // Create post
-            await ctx.db.post.create({
+            const post = await ctx.db.post.create({
               data: {
                 workspaceId,
                 createdById: ctx.session.user.id,
@@ -825,6 +828,23 @@ export const postsRouter = createTRPCRouter({
                   connect: socialAccounts.map(({ id }) => ({ id })),
                 },
                 scheduleId,
+              },
+            });
+
+            // ==== Add AI Generation Log ====
+            await ctx.db.aIGenerationLog.create({
+              data: {
+                userId: ctx.session.user.id,
+                workspaceId,
+                postId: post.id,
+                scheduleId,
+                type: "TEXT", // from AIGenerationType enum
+                prompt,
+                model: "gpt-4o-mini",
+                tokens: contentResponse.usage?.total_tokens ?? null,
+                duration,
+                status: "COMPLETED", // from AIGenerationStatus enum
+                cost: 0, // if you track OpenAI costs, calculate here
               },
             });
 
@@ -940,12 +960,15 @@ export const postsRouter = createTRPCRouter({
           `Generate a relevant image for the post content: ${post.content}`;
 
         try {
+          const start = Date.now();
           const response = await openai.images.generate({
             model: "dall-e-3",
             prompt: effectivePrompt,
             n: 1,
             size: "1024x1024",
           });
+
+          const duration = (Date.now() - start) / 1000;
 
           if (!response.data || !response.data[0]) {
             throw new TRPCError({
@@ -965,26 +988,55 @@ export const postsRouter = createTRPCRouter({
 
           const uploadUrl = await uploadGeneratedImage(imageUrl);
 
+          // Log AI generation
+          const aiGeneration = await ctx.db.aIGenerationLog.create({
+            data: {
+              userId: ctx.session.user.id,
+              workspaceId,
+              postId: post.id,
+              scheduleId,
+              type: "IMAGE",
+              prompt: effectivePrompt,
+              model: "dall-e-3",
+              imageSize: "1024x1024",
+              duration, // Update with actual duration if available
+              status: "COMPLETED",
+              cost: 0, // Update with actual cost if applicable
+            },
+          });
+
+          let postImage;
           if (post.images.length > 0 && post.images[0]?.id) {
-            await ctx.db.postImage.update({
+            postImage = await ctx.db.postImage.update({
               where: { id: post.images[0].id },
               data: {
                 url: uploadUrl,
                 aiPrompt: effectivePrompt,
                 isApproved: false,
+                aiGenerationId: aiGeneration.id,
               },
             });
           } else {
-            await ctx.db.postImage.create({
+            postImage = await ctx.db.postImage.create({
               data: {
                 postId: post.id,
                 url: uploadUrl,
                 aiPrompt: effectivePrompt,
                 isApproved: false,
                 order: 0,
+                aiGenerationId: aiGeneration.id,
               },
             });
           }
+
+          // 3. Update the AI generation log with the imageId + mark completed
+          await ctx.db.aIGenerationLog.update({
+            where: { id: aiGeneration.id },
+            data: {
+              imageId: postImage.id,
+              status: "COMPLETED",
+            },
+          });
 
           await ctx.db.post.update({
             where: { id: post.id },
@@ -1164,6 +1216,9 @@ export const postsRouter = createTRPCRouter({
               scheduleId
             );
 
+            // Measure duration (if you want to track how long each call took)
+            const startTime = Date.now();
+
             // Generate post content
             const contentResponse = await openai.chat.completions.create({
               model: "gpt-4o-mini",
@@ -1205,6 +1260,8 @@ export const postsRouter = createTRPCRouter({
               max_tokens: 500,
             });
 
+            const duration = (Date.now() - startTime) / 1000; // in seconds
+
             let parsed: { content: string; hashtags: string[] } = {
               content: "",
               hashtags: [],
@@ -1227,7 +1284,7 @@ export const postsRouter = createTRPCRouter({
             parsed.hashtags.forEach((h) => usedHashtags.add(h));
 
             // Create post with store details
-            await ctx.db.post.create({
+            const post = await ctx.db.post.create({
               data: {
                 workspaceId,
                 createdById: ctx.session.user.id,
@@ -1246,6 +1303,23 @@ export const postsRouter = createTRPCRouter({
                 scheduleId,
                 storeName: store.name, // Store store name
                 storeUrl: store.displayUrl, // Store store URL
+              },
+            });
+
+            // ==== Add AI Generation Log ====
+            await ctx.db.aIGenerationLog.create({
+              data: {
+                userId: ctx.session.user.id,
+                workspaceId,
+                postId: post.id,
+                scheduleId,
+                type: "TEXT", // from AIGenerationType enum
+                prompt,
+                model: "gpt-4o-mini",
+                tokens: contentResponse.usage?.total_tokens ?? null,
+                duration,
+                status: "COMPLETED", // from AIGenerationStatus enum
+                cost: 0, // if you track OpenAI costs, calculate here
               },
             });
 
@@ -1386,15 +1460,23 @@ export const postsRouter = createTRPCRouter({
 
         const effectivePrompt =
           schedule.imagePrompt ||
-          `Create a promotional social media graphic featuring the logos of Promowaves and ${store.name}. Include the Promowaves logo from ${workspace.logoUrl} and the store logo from ${store.logo}. Design an engaging, visually appealing background relevant to the store's category (${store.category}). Do not include any text in the image.`;
-
+          `Design a high-quality, professional promotional social media graphic.
+          
+          Requirements:
+          - Incorporate the **Promowaves logo** (${workspace.logoUrl}) and the **${store.name} logo** (${store.logo}) prominently.
+          - Style: modern, vibrant, and engaging for social media marketing.
+          - Background should reflect the theme of the store’s category: "${store.category}".
+          - Composition should balance both logos naturally, as if co-branded content.
+          - Do NOT include any text or watermarks. Only visuals.`;
         try {
+          const start = Date.now();
           const response = await openai.images.generate({
             model: "dall-e-3",
             prompt: effectivePrompt,
             n: 1,
             size: "1024x1024",
           });
+          const duration = (Date.now() - start) / 1000; // in seconds
 
           if (!response.data || !response.data[0]) {
             throw new TRPCError({
@@ -1424,15 +1506,15 @@ export const postsRouter = createTRPCRouter({
               prompt: effectivePrompt,
               model: "dall-e-3",
               imageSize: "1024x1024",
-              duration: 0, // Update with actual duration if available
+              duration, // Update with actual duration if available
               status: "COMPLETED",
               cost: 0, // Update with actual cost if applicable
-              imageId: undefined, // Will be updated below
             },
           });
 
+          let postImage;
           if (post.images.length > 0 && post.images[0]?.id) {
-            await ctx.db.postImage.update({
+            postImage = await ctx.db.postImage.update({
               where: { id: post.images[0].id },
               data: {
                 url: uploadUrl,
@@ -1442,7 +1524,7 @@ export const postsRouter = createTRPCRouter({
               },
             });
           } else {
-            await ctx.db.postImage.create({
+            postImage = await ctx.db.postImage.create({
               data: {
                 postId: post.id,
                 url: uploadUrl,
@@ -1454,10 +1536,12 @@ export const postsRouter = createTRPCRouter({
             });
           }
 
-          await ctx.db.post.update({
-            where: { id: post.id },
+          // 3. Update the AI generation log with the imageId + mark completed
+          await ctx.db.aIGenerationLog.update({
+            where: { id: aiGeneration.id },
             data: {
-              status: PostStatus.IMAGE_PENDING_APPROVAL,
+              imageId: postImage.id,
+              status: "COMPLETED",
             },
           });
 
