@@ -470,6 +470,8 @@ export const postsRouter = createTRPCRouter({
           aiPrompt: true,
           aiModel: true,
           scheduleId: true,
+          storeName: true,
+          storeUrl: true,
           socialAccounts: {
             select: {
               id: true,

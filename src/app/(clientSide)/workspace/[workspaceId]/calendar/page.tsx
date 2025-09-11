@@ -116,7 +116,12 @@ export default function CalendarPage() {
               currentDate={currentDate}
               selectedDate={selectedDate}
               setSelectedDate={setSelectedDate}
-              scheduledPosts={scheduledPosts || []}
+              scheduledPosts={(scheduledPosts || []).map((post) => ({
+                ...post,
+                storeName: post.storeName ?? null,
+                storeUrl: post.storeUrl ?? null,
+                scheduleId: post.scheduleId ?? null,
+              }))}
               schedules={activeSchedules || []}
               navigateMonth={navigateMonth}
             />
