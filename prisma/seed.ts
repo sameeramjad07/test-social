@@ -309,7 +309,7 @@ async function main() {
       name: "PromoWaves",
       slug: "promowaves",
       description: "The ultimate social media management platform for growing your brand",
-      logoUrl: "https://promowaves.com/logo.png", // Update with actual logo
+      logoUrl: "https://promowaves.net/_next/image?url=%2F_next%2Fstatic%2Fmedia%2Flogo_close_beta.4fedd7a9.png&w=384&q=75", // Update with actual logo
     },
   });
 

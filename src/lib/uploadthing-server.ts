@@ -28,14 +28,24 @@ export async function uploadGeneratedImage(imageUrl: string): Promise<string> {
 export async function uploadGeneratedImageFromBase64(base64Data: string): Promise<string> {
   // Convert base64 to buffer
   const buffer = Buffer.from(base64Data, 'base64');
-  
+
   // Create a unique filename
   const uniqueName = `generated-${Date.now()}-${randomUUID()}.png`;
 
-  // Upload directly to UploadThing
-  const uploaded = await utapi.uploadFiles([
-    new File([buffer], uniqueName, { type: "image/png" }),
-  ]);
+  let uploaded;
+  try {
+    // Create a Blob with the required name property for FileEsque type
+    const blob = new Blob([buffer], { type: "image/png" }) as Blob & {
+      name: string;
+      lastModified?: number;
+    };
+    blob.name = uniqueName;
+
+    // Upload directly to UploadThing
+    uploaded = await utapi.uploadFiles([blob]);
+  } catch (e) {
+    throw new Error(`Failed to upload image to UploadThing: ${e}`);
+  }
 
   const file = uploaded[0];
 
