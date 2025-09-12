@@ -30,6 +30,7 @@ export const env = createEnv({
     LINKEDIN_REDIRECT_URI: z.string().min(1).optional(),
     OPENAI_API_KEY: z.string().min(1),
     UPLOADTHING_TOKEN: z.string().min(1),
+    GEMINI_API_KEY: z.string().min(1),
   },
 
   /**
@@ -64,6 +65,8 @@ export const env = createEnv({
     LINKEDIN_REDIRECT_URI: process.env.LINKEDIN_REDIRECT_URI,
     OPENAI_API_KEY: process.env.OPENAI_API_KEY,
     UPLOADTHING_TOKEN: process.env.UPLOADTHING_TOKEN,
+    GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+
   },
   /**
    * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially

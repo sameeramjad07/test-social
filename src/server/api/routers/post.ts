@@ -11,10 +11,15 @@ import {
 import OpenAI from "openai";
 import { format } from "date-fns";
 import type { SupportedPlatform } from "@/app/(clientSide)/workspace/[workspaceId]/schedule/[scheduleId]/posts/[postId]/page";
-import { uploadGeneratedImage } from "@/lib/uploadthing-server";
+import { uploadGeneratedImage, uploadGeneratedImageFromBase64 } from "@/lib/uploadthing-server";
 import { fetchAndSelectStore, type Store } from "@/lib/promoStores";
+import { GoogleGenAI } from "@google/genai";
+import { env } from "@/env";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
+const genAI = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
+
 
 const listPostsSchema = z.object({
   workspaceId: z.string(),
@@ -581,19 +586,19 @@ export const postsRouter = createTRPCRouter({
           status: PostStatus.DRAFT,
           images: imageUrl
             ? {
-                upsert: {
-                  where: { id: post.images[0]?.id || "dummy-id" },
-                  create: {
-                    url: imageUrl,
-                    order: 0,
-                    isApproved: false,
-                  },
-                  update: {
-                    url: imageUrl,
-                    isApproved: false,
-                  },
+              upsert: {
+                where: { id: post.images[0]?.id || "dummy-id" },
+                create: {
+                  url: imageUrl,
+                  order: 0,
+                  isApproved: false,
                 },
-              }
+                update: {
+                  url: imageUrl,
+                  isApproved: false,
+                },
+              },
+            }
             : undefined,
         },
       });
@@ -764,8 +769,8 @@ export const postsRouter = createTRPCRouter({
                     - content: the text of the post (max 280 chars if Twitter is included, 2200 for Instagram, 3000 for LinkedIn, 63206 for Facebook).
                     - hashtags: 3-5 hashtags, array of strings, no duplicates from the provided list.
                     Ensure content is unique, engaging, and tailored to the platforms: ${schedule.platforms.join(
-                      ", "
-                    )}.
+                    ", "
+                  )}.
                   `,
                 },
                 {
@@ -775,8 +780,8 @@ export const postsRouter = createTRPCRouter({
                     Post index: ${postIndex} of ${totalPosts}
                     Platforms: ${schedule.platforms.join(", ")}
                     Avoid reusing these hashtags: ${Array.from(
-                      usedHashtags
-                    ).join(", ")}
+                    usedHashtags
+                  ).join(", ")}
                     Scheduled date: ${format(scheduledAt, "PPP")}
                   `,
                 },
@@ -1235,8 +1240,7 @@ export const postsRouter = createTRPCRouter({
                     - hashtags: 3-5 hashtags, array of strings, no duplicates from the provided list.
                     Use the store details to create an engaging post:
                     - Store Name: ${store.name}
-                    - Description: ${
-                      store.description || "No description available"
+                    - Description: ${store.description || "No description available"
                     }
                     - Category: ${store.category}
                     - Display URL: ${store.displayUrl}
@@ -1252,8 +1256,8 @@ export const postsRouter = createTRPCRouter({
                     Post index: ${postIndex} of ${totalPosts}
                     Platforms: ${schedule.platforms.join(", ")}
                     Avoid reusing these hashtags: ${Array.from(
-                      usedHashtags
-                    ).join(", ")}
+                    usedHashtags
+                  ).join(", ")}
                     Scheduled date: ${format(scheduledAt, "PPP")}
                   `,
                 },
@@ -1418,6 +1422,7 @@ export const postsRouter = createTRPCRouter({
       }
 
       const totalImages = posts.length;
+
       await ctx.db.postGenerationProgress.upsert({
         where: { scheduleId },
         create: { scheduleId, total: totalImages, completed: 0 },
@@ -1462,40 +1467,99 @@ export const postsRouter = createTRPCRouter({
 
         const effectivePrompt =
           schedule.imagePrompt ||
-          `Design a high-quality, professional promotional social media graphic.
-          
-          Requirements:
-          - Incorporate the **Promowaves logo** (${workspace.logoUrl}) and the **${store.name} logo** (${store.logo}) prominently.
-          - Style: modern, vibrant, and engaging for social media marketing.
-          - Background should reflect the theme of the store’s category: "${store.category}".
-          - Composition should balance both logos naturally, as if co-branded content.
-          - Do NOT include any text or watermarks. Only visuals.`;
+          `Create a professional promotional banner for social media marketing.
+                Design Requirements:
+                - Format: Eye-catching discount promotion banner optimized for social media
+                - Featured Elements:
+                • Promowaves logo (top or corner placement)
+                • ${store.name} logo (prominent co-branding)
+                • " ${store.description} " store Desctiption
+                • Bold discount percentage or offer (e.g., "50% OFF", "FLASH SALE", "LIMITED TIME")
+                • Call-to-action text (e.g., "Shop Now", "Get Deal", "Save Today")
+                • Promo code if applicable (in readable, standout format)
+
+                Visual Style:
+                - Design aesthetic: Modern, vibrant, high-converting promotional graphics
+                - Color scheme: High contrast with attention-grabbing elements
+                - Category theme: ${store.category} industry visuals as subtle background
+                - Typography: Bold, readable fonts that command attention
+                - Layout: Professional banner composition with clear visual hierarchy
+
+                Technical Specs:
+                - Optimized for ${'social media'} dimensions
+                - High resolution with crisp text rendering
+                - Mobile-friendly readability
+                - Professional retail promotion quality`;
+
         try {
           const start = Date.now();
-          const response = await openai.images.generate({
-            model: "dall-e-3",
-            prompt: effectivePrompt,
-            n: 1,
-            size: "1024x1024",
+
+          // Prepare content array with logos if they exist
+          const promptContent = [];
+
+          // Add text prompt
+          promptContent.push({ text: effectivePrompt });
+
+          // Add workspace logo if available
+          if (workspace.logoUrl) {
+            const logoResponse = await fetch(workspace.logoUrl);
+            const logoBuffer = await logoResponse.arrayBuffer();
+            const nodeBuffer = Buffer.from(logoBuffer);
+            const logoBase64 = nodeBuffer.toString('base64');
+
+            promptContent.push({
+              inlineData: {
+                mimeType: "image/png",
+                data: logoBase64,
+              },
+            });
+          }
+
+          // Add store logo if available
+          if (store.logo) {
+            const storeLogoResponse = await fetch(store.logo);
+            const storeLogoBuffer = await storeLogoResponse.arrayBuffer();
+            const nodeBuffer = Buffer.from(storeLogoBuffer);
+            const storeLogoBase64 = nodeBuffer.toString('base64');
+
+            promptContent.push({
+              inlineData: {
+                mimeType: "image/png",
+                data: storeLogoBase64,
+              },
+            });
+          }
+
+          // Generate image using Nano Banana
+          const response = await genAI.models.generateContent({
+            model: "gemini-2.5-flash-image-preview",
+            contents: promptContent,
           });
+
           const duration = (Date.now() - start) / 1000; // in seconds
 
-          if (!response.data || !response.data[0]) {
-            throw new TRPCError({
-              code: "INTERNAL_SERVER_ERROR",
-              message: "Failed to generate image: No data returned",
-            });
+          // Extract generated image from response
+          let imageBase64: string | null | undefined = null;
+
+
+          const candidates = response.candidates ?? [];
+          if (candidates.length > 0) {
+            const parts = candidates[0]?.content?.parts ?? [];
+            for (const part of parts) {
+              if (part.inlineData?.data) {
+                imageBase64 = part.inlineData.data;
+                break;
+              }
+            }
           }
 
-          const imageUrl = response.data[0].url;
-          if (!imageUrl) {
-            throw new TRPCError({
-              code: "INTERNAL_SERVER_ERROR",
-              message: "Failed to generate image: No URL returned",
-            });
+
+          if (!imageBase64) {
+            throw new Error("No image generated in response");
           }
 
-          const uploadUrl = await uploadGeneratedImage(imageUrl);
+          // Upload the generated image using UploadThing
+          const uploadUrl = await uploadGeneratedImageFromBase64(imageBase64);
 
           // Log AI generation
           const aiGeneration = await ctx.db.aIGenerationLog.create({
@@ -1506,11 +1570,11 @@ export const postsRouter = createTRPCRouter({
               scheduleId,
               type: "IMAGE",
               prompt: effectivePrompt,
-              model: "dall-e-3",
+              model: "gemini-2.5-flash-image-preview",
               imageSize: "1024x1024",
-              duration, // Update with actual duration if available
+              duration,
               status: "COMPLETED",
-              cost: 0, // Update with actual cost if applicable
+              cost: 0,
             },
           });
 
@@ -1538,7 +1602,7 @@ export const postsRouter = createTRPCRouter({
             });
           }
 
-          // 3. Update the AI generation log with the imageId + mark completed
+          // Update the AI generation log with the imageId
           await ctx.db.aIGenerationLog.update({
             where: { id: aiGeneration.id },
             data: {
@@ -1554,6 +1618,24 @@ export const postsRouter = createTRPCRouter({
           });
         } catch (error) {
           console.error(`Failed to generate image for post ${post.id}:`, error);
+
+          // Log failed generation
+          await ctx.db.aIGenerationLog.create({
+            data: {
+              userId: ctx.session.user.id,
+              workspaceId,
+              postId: post.id,
+              scheduleId,
+              type: "IMAGE",
+              prompt: effectivePrompt,
+              model: "gemini-2.5-flash-image-preview",
+              imageSize: "1024x1024",
+              duration: 0,
+              status: "FAILED",
+              error: error instanceof Error ? error.message : "Unknown error",
+              cost: 0,
+            },
+          });
           continue;
         }
       }

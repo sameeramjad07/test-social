@@ -24,3 +24,24 @@ export async function uploadGeneratedImage(imageUrl: string): Promise<string> {
 
   return file.data.url; // ✅ unique file URL
 }
+
+export async function uploadGeneratedImageFromBase64(base64Data: string): Promise<string> {
+  // Convert base64 to buffer
+  const buffer = Buffer.from(base64Data, 'base64');
+  
+  // Create a unique filename
+  const uniqueName = `generated-${Date.now()}-${randomUUID()}.png`;
+
+  // Upload directly to UploadThing
+  const uploaded = await utapi.uploadFiles([
+    new File([buffer], uniqueName, { type: "image/png" }),
+  ]);
+
+  const file = uploaded[0];
+
+  if (!file || file.error || !file.data?.url) {
+    throw new Error("UploadThing did not return a valid file URL");
+  }
+
+  return file.data.url;
+}
