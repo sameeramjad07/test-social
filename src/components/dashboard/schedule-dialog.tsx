@@ -42,8 +42,8 @@ interface ScheduleCreationDialogProps {
   workspaceId: string;
 }
 
-const PROMOWAVES_WORKSPACE_ID = "cmfcejqiw003go25g2vwaqiia"; // PostWaves Promowaves ID
-// const PROMOWAVES_WORKSPACE_ID = "cmdyoea02003f5d05xo4gpw8h"; // Promowaves ID in Neon DB
+// const PROMOWAVES_WORKSPACE_ID = "cmfcejqiw003go25g2vwaqiia"; // PostWaves Promowaves ID
+const PROMOWAVES_WORKSPACE_ID = "cmdyoea02003f5d05xo4gpw8h"; // Promowaves ID in Neon DB
 
 export function ScheduleCreationDialog({
   isOpen,

@@ -376,8 +376,8 @@ export const postsRouter = createTRPCRouter({
       if (
         input.storeName &&
         input.storeUrl &&
-        input.workspaceId === "cmfcejqiw003go25g2vwaqiia" // PostWaves Promowaves ID
-        // input.workspaceId === "cmdyoea02003f5d05xo4gpw8h" // Promowaves ID in Neon DB
+        // input.workspaceId === "cmfcejqiw003go25g2vwaqiia" // PostWaves Promowaves ID
+        input.workspaceId === "cmdyoea02003f5d05xo4gpw8h" // Promowaves ID in Neon DB
       ) {
         await ctx.db.usedStore.create({
           data: {
