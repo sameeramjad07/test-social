@@ -89,16 +89,8 @@ export function Navbar() {
             onClick={() => router.push("/")}
           >
             <div className="relative">
-              <motion.div
-                animate={{ rotate: 360 }}
-                transition={{
-                  duration: 20,
-                  repeat: Number.POSITIVE_INFINITY,
-                  ease: "linear",
-                }}
-                className="w-8 h-8 bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg flex items-center justify-center"
-              >
-                <Zap className="w-5 h-5 text-white" />
+              <motion.div className="w-11 h-11 bg-white rounded-lg flex items-center justify-center">
+                <img src="/promowaves.ico" alt="" />
               </motion.div>
               <motion.div
                 animate={{ scale: [1, 1.2, 1] }}

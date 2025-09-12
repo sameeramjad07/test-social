@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
+import { uploadGeneratedImage } from "@/lib/uploadthing-server";
 
 function createSlug(name: string): string {
   return name
@@ -73,12 +74,28 @@ export const workspacesRouter = createTRPCRouter({
           slugSuffix++;
         }
 
+        // Use uploadthing URL if provided
+        let finalLogoUrl = logoUrl;
+        if (logoUrl && logoUrl.startsWith("http")) {
+          // (Optional) you could process it through uploadGeneratedImage
+          // if you want consistency, like you do for posts
+          try {
+            finalLogoUrl = await uploadGeneratedImage(logoUrl);
+          } catch (err) {
+            console.error("Logo upload failed:", err);
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: "Failed to upload workspace logo",
+            });
+          }
+        }
+
         const workspace = await tx.workspace.create({
           data: {
             name,
             slug,
             description,
-            logoUrl,
+            logoUrl: finalLogoUrl,
           },
         });
 

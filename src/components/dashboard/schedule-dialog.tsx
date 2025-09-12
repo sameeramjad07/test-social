@@ -42,6 +42,9 @@ interface ScheduleCreationDialogProps {
   workspaceId: string;
 }
 
+// const PROMOWAVES_WORKSPACE_ID = "cmfcejqiw003go25g2vwaqiia"; // PostWaves Promowaves ID
+const PROMOWAVES_WORKSPACE_ID = "cmdyoea02003f5d05xo4gpw8h"; // Promowaves ID in Neon DB
+
 export function ScheduleCreationDialog({
   isOpen,
   onOpenChange,
@@ -50,6 +53,7 @@ export function ScheduleCreationDialog({
   const router = useRouter();
   const utils = api.useUtils();
   const [progress, setProgress] = useState<number>(0);
+  const isPromowaves = workspaceId === PROMOWAVES_WORKSPACE_ID;
   const [newSchedule, setNewSchedule] = useState({
     name: "",
     description: "",
@@ -61,7 +65,9 @@ export function ScheduleCreationDialog({
     monthDays: [] as number[],
     timeSlots: ["12:00"] as string[],
     postsPerSlot: 1,
-    contentPrompt: "",
+    contentPrompt: isPromowaves
+      ? "Create engaging affiliate marketing posts for various stores, highlighting their products and including their display URL."
+      : "",
     hashtags: [] as string[],
     isActive: false,
   });
@@ -73,25 +79,34 @@ export function ScheduleCreationDialog({
 
   const createMutation = api.schedules.create.useMutation();
   const generateBulkPosts = api.posts.generateBulkPosts.useMutation();
+  const generateBulkPostsForPromowaves =
+    api.posts.generateBulkPostsForPromowaves.useMutation();
 
   const handleSuccess = async (data: { id: string }) => {
     try {
-      setProgress(30); // schedule created
+      setProgress(30); // Schedule created
 
       // Start generating posts
       setProgress(60);
       toast.success("Schedule created. Generating posts...");
-      await generateBulkPosts.mutateAsync({
-        scheduleId: data.id,
-        workspaceId,
-        prompt: newSchedule.contentPrompt,
-      });
+      if (isPromowaves) {
+        await generateBulkPostsForPromowaves.mutateAsync({
+          scheduleId: data.id,
+          workspaceId,
+          prompt: newSchedule.contentPrompt,
+        });
+      } else {
+        await generateBulkPosts.mutateAsync({
+          scheduleId: data.id,
+          workspaceId,
+          prompt: newSchedule.contentPrompt,
+        });
+      }
 
-      setProgress(80); // posts generating (midway)
-      await new Promise((resolve) => setTimeout(resolve, 500)); // simulate step delay
-      setProgress(100); // done
+      setProgress(80); // Posts generating (midway)
+      await new Promise((resolve) => setTimeout(resolve, 500)); // Simulate step delay
+      setProgress(100); // Done
       toast.success("Schedule and posts created successfully!");
-      // Invalidate schedules list
       await utils.schedules.list.invalidate({ workspaceId });
       router.push(`/workspace/${workspaceId}/schedule/${data.id}`);
       onOpenChange(false);
@@ -106,11 +121,13 @@ export function ScheduleCreationDialog({
         monthDays: [],
         timeSlots: ["12:00"],
         postsPerSlot: 1,
-        contentPrompt: "",
+        contentPrompt: isPromowaves
+          ? "Create engaging affiliate marketing posts for various stores, highlighting their products and including their display URL."
+          : "",
         hashtags: [],
         isActive: false,
       });
-      setTimeout(() => setProgress(0), 800); // hide bar after short delay
+      setTimeout(() => setProgress(0), 800); // Hide bar after short delay
     } catch (error) {
       toast.error("Failed to generate posts: " + (error as Error).message);
     }
@@ -286,8 +303,9 @@ export function ScheduleCreationDialog({
               Create AI Content Schedule
             </DialogTitle>
             <DialogDescription className="text-sm">
-              Set up a new AI-powered content schedule for your social media
-              platforms
+              {isPromowaves
+                ? "Set up a new AI-powered content schedule for Promowaves, generating posts for various stores using affiliate data."
+                : "Set up a new AI-powered content schedule for your social media platforms"}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -543,11 +561,21 @@ export function ScheduleCreationDialog({
                     contentPrompt: e.target.value,
                   })
                 }
-                placeholder="e.g., Write engaging posts about our new AI features..."
+                placeholder={
+                  isPromowaves
+                    ? "e.g., Create engaging affiliate marketing posts for various stores, highlighting their products and including their display URL."
+                    : "e.g., Write engaging posts about our new AI features..."
+                }
                 rows={4}
                 className="text-sm"
                 required
               />
+              {isPromowaves && (
+                <p className="text-xs text-slate-500 mt-1">
+                  Posts will be generated using store data from the Promowaves
+                  API.
+                </p>
+              )}
             </div>
 
             <div className="space-y-1">
@@ -622,6 +650,7 @@ export function ScheduleCreationDialog({
           </div>
           {(createMutation.isPending ||
             generateBulkPosts.isPending ||
+            generateBulkPostsForPromowaves.isPending ||
             progress > 0) && (
             <div className="w-full mt-4">
               <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden relative">
@@ -650,10 +679,13 @@ export function ScheduleCreationDialog({
               disabled={
                 createMutation.isPending ||
                 isLoading ||
-                generateBulkPosts.isPending
+                generateBulkPosts.isPending ||
+                generateBulkPostsForPromowaves.isPending
               }
             >
-              {createMutation.isPending || generateBulkPosts.isPending
+              {createMutation.isPending ||
+              generateBulkPosts.isPending ||
+              generateBulkPostsForPromowaves.isPending
                 ? "Creating..."
                 : "Create Schedule and Generate Posts"}
             </Button>

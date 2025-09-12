@@ -53,14 +53,13 @@ import {
 } from "@/components/ui/alert-dialog";
 import EditScheduleDialog from "@/components/schedule/EditScheduleDialog";
 
-function PreviewImage({ src, alt }: { src?: string | null; alt?: string }) {
-  // fallback must match the file in /public (you said no-image.jpg)
-  const FALLBACK = "/no-image.jpg";
+// const PROMOWAVES_WORKSPACE_ID = "cmfcejqiw003go25g2vwaqiia"; // PostWaves Promowaves ID
+const PROMOWAVES_WORKSPACE_ID = "cmdyoea02003f5d05xo4gpw8h"; // Promowaves ID in Neon DB
 
-  // initialize to src || fallback so we never render an undefined src
+function PreviewImage({ src, alt }: { src?: string | null; alt?: string }) {
+  const FALLBACK = "/no-image.jpg";
   const [imgSrc, setImgSrc] = useState<string>(src || FALLBACK);
 
-  // if parent changes the src, update local src (but keep fallback as default)
   useEffect(() => {
     setImgSrc(src || FALLBACK);
   }, [src]);
@@ -73,12 +72,10 @@ function PreviewImage({ src, alt }: { src?: string | null; alt?: string }) {
       height={64}
       loading="lazy"
       decoding="async"
-      // if the image fails to load, switch to the fallback
       onError={() => {
         if (imgSrc !== FALLBACK) setImgSrc(FALLBACK);
       }}
       className="w-36 h-36 object-cover rounded-md border border-slate-200 dark:border-slate-700"
-      // reserve space to avoid layout shifts
       style={{ minWidth: 64, minHeight: 64 }}
     />
   );
@@ -100,6 +97,7 @@ export default function ScheduleEditorPage() {
   const params = useParams();
   const scheduleId = params.scheduleId as string;
   const workspaceId = params.workspaceId as string;
+  const isPromowaves = workspaceId === PROMOWAVES_WORKSPACE_ID;
 
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [bulkPrompt, setBulkPrompt] = useState("");
@@ -135,6 +133,15 @@ export default function ScheduleEditorPage() {
     onError: (error) => toast.error(error.message),
   });
 
+  const generateBulkPostsForPromowaves =
+    api.posts.generateBulkPostsForPromowaves.useMutation({
+      onSuccess: () => {
+        toast.success("Promowaves post generation started");
+        refetchProgress();
+      },
+      onError: (error) => toast.error(error.message),
+    });
+
   const deleteAllPosts = api.posts.deleteAllPosts.useMutation({
     onSuccess: () => {
       toast.success("All posts deleted");
@@ -148,6 +155,16 @@ export default function ScheduleEditorPage() {
     api.posts.generateImagesForAllPosts.useMutation({
       onSuccess: () => {
         toast.success("Image generation started for all posts");
+        refetchProgress();
+        router.refresh();
+      },
+      onError: (error) => toast.error(error.message),
+    });
+
+  const generateImagesForAllPostsOfPromowaves =
+    api.posts.generateImagesForAllPostsOfPromowaves.useMutation({
+      onSuccess: () => {
+        toast.success("Promowaves image generation started for all posts");
         refetchProgress();
         router.refresh();
       },
@@ -182,9 +199,14 @@ export default function ScheduleEditorPage() {
 
   useEffect(() => {
     if (schedule) {
-      setBulkPrompt(schedule.contentPrompt || "");
+      setBulkPrompt(
+        isPromowaves
+          ? schedule.contentPrompt ||
+              "Create engaging affiliate marketing posts for various stores, highlighting their products and including their display URL."
+          : schedule.contentPrompt || ""
+      );
     }
-  }, [schedule]);
+  }, [schedule, isPromowaves]);
 
   const handleActivate = () => {
     activateSchedule.mutate({ scheduleId, workspaceId });
@@ -196,16 +218,28 @@ export default function ScheduleEditorPage() {
       return;
     }
     try {
-      await generateBulkPosts.mutateAsync({
-        scheduleId,
-        workspaceId,
-        prompt: bulkPrompt,
-      });
+      if (isPromowaves) {
+        await generateBulkPostsForPromowaves.mutateAsync({
+          scheduleId,
+          workspaceId,
+          prompt: bulkPrompt,
+        });
+      } else {
+        await generateBulkPosts.mutateAsync({
+          scheduleId,
+          workspaceId,
+          prompt: bulkPrompt,
+        });
+      }
       const interval = setInterval(() => {
         refetchProgress();
         if (progress?.completed === progress?.total) {
           clearInterval(interval);
-          toast.success("Post generation completed");
+          toast.success(
+            isPromowaves
+              ? "Promowaves post generation completed"
+              : "Post generation completed"
+          );
           router.refresh();
         }
       }, 5000);
@@ -218,29 +252,37 @@ export default function ScheduleEditorPage() {
 
   const handleGenerateImagesForAllPosts = async () => {
     try {
-      setImageProgress(10); // start
-
-      await generateImagesForAllPosts.mutateAsync({ scheduleId, workspaceId });
-
-      setImageProgress(30); // request sent
-
+      setImageProgress(10); // Start
+      if (isPromowaves) {
+        await generateImagesForAllPostsOfPromowaves.mutateAsync({
+          scheduleId,
+          workspaceId,
+        });
+      } else {
+        await generateImagesForAllPosts.mutateAsync({
+          scheduleId,
+          workspaceId,
+        });
+      }
+      setImageProgress(30); // Request sent
       const interval = setInterval(() => {
         refetchProgress();
-
         if (progress?.completed && progress?.total) {
           const percent = Math.round(
             (progress.completed / progress.total) * 100
           );
-          setImageProgress(Math.max(30, Math.min(percent, 95))); // smooth update
+          setImageProgress(Math.max(30, Math.min(percent, 95))); // Smooth update
         }
-
         if (progress?.completed === progress?.total) {
           clearInterval(interval);
           setImageProgress(100);
-          toast.success("Image generation completed for all posts");
+          toast.success(
+            isPromowaves
+              ? "Promowaves image generation completed for all posts"
+              : "Image generation completed for all posts"
+          );
           router.refresh();
-
-          setTimeout(() => setImageProgress(0), 800); // reset after short delay
+          setTimeout(() => setImageProgress(0), 800); // Reset after short delay
         }
       }, 2000);
     } catch (error) {
@@ -420,7 +462,9 @@ export default function ScheduleEditorPage() {
           <CardHeader>
             <CardTitle>Manage Posts</CardTitle>
             <CardDescription>
-              Generate, review, and approve posts for this schedule
+              {isPromowaves
+                ? "Generate, review, and approve posts for Promowaves, using store data from the affiliate marketing platform."
+                : "Generate, review, and approve posts for this schedule"}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
@@ -452,8 +496,9 @@ export default function ScheduleEditorPage() {
                     </li>
                   </ul>
                   <p className="text-sm text-slate-600 dark:text-slate-400 mt-2">
-                    Provide a detailed prompt below to generate content and
-                    hashtags for all posts.
+                    {isPromowaves
+                      ? "Provide a detailed prompt below to generate content and hashtags for posts using store data from the Promowaves API."
+                      : "Provide a detailed prompt below to generate content and hashtags for all posts."}
                   </p>
                 </div>
                 <div className="space-y-2">
@@ -466,17 +511,28 @@ export default function ScheduleEditorPage() {
                     onChange={(e) => setBulkPrompt(e.target.value)}
                     rows={6}
                     className="w-full p-2 border rounded-md"
-                    placeholder="Enter a detailed prompt (e.g., 'Create engaging posts about sustainable fashion for young professionals on the specified platforms, tailored for August 21-31, 2025, with hashtags like #SustainableFashion #EcoFriendly')"
+                    placeholder={
+                      isPromowaves
+                        ? "e.g., Create engaging affiliate marketing posts for various stores, highlighting their products and including their display URL."
+                        : "e.g., Create engaging posts about sustainable fashion for young professionals on the specified platforms, tailored for August 21-31, 2025, with hashtags like #SustainableFashion #EcoFriendly"
+                    }
                   />
                 </div>
                 <Button
                   onClick={handleGenerateBulkPosts}
-                  disabled={generateBulkPosts.isPending || !bulkPrompt}
+                  disabled={
+                    generateBulkPosts.isPending ||
+                    generateBulkPostsForPromowaves.isPending ||
+                    !bulkPrompt
+                  }
                   className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
                 >
                   <Sparkles className="w-4 h-4 mr-2" />
-                  {generateBulkPosts.isPending
+                  {generateBulkPosts.isPending ||
+                  generateBulkPostsForPromowaves.isPending
                     ? "Starting Generation..."
+                    : isPromowaves
+                    ? "Generate Promowaves Posts"
                     : "Generate All Posts"}
                 </Button>
               </div>
@@ -484,7 +540,11 @@ export default function ScheduleEditorPage() {
             {progress && progress.total > 0 && (
               <div className="space-y-2">
                 <div className="flex justify-between text-sm">
-                  <span>Generation Progress</span>
+                  <span>
+                    {isPromowaves
+                      ? "Promowaves Post Generation Progress"
+                      : "Post Generation Progress"}
+                  </span>
                   <span>
                     {progress.completed}/{progress.total} posts (
                     {Math.round(completionPercentage)}%)
@@ -496,7 +556,11 @@ export default function ScheduleEditorPage() {
             {imageProgress > 0 && (
               <div className="space-y-2">
                 <div className="flex justify-between text-sm">
-                  <span>Image Generation Progress</span>
+                  <span>
+                    {isPromowaves
+                      ? "Promowaves Image Generation Progress"
+                      : "Image Generation Progress"}
+                  </span>
                   <span>{imageProgress}%</span>
                 </div>
                 <Progress value={imageProgress} className="h-2" />
@@ -510,15 +574,20 @@ export default function ScheduleEditorPage() {
                   <div className="flex gap-2">
                     <Button
                       onClick={handleGenerateImagesForAllPosts}
-                      disabled={generateImagesForAllPosts.isPending}
+                      disabled={
+                        generateImagesForAllPosts.isPending ||
+                        generateImagesForAllPostsOfPromowaves.isPending
+                      }
                       className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700"
                     >
                       <Image className="w-4 h-4 mr-2" />
-                      {generateImagesForAllPosts.isPending
+                      {generateImagesForAllPosts.isPending ||
+                      generateImagesForAllPostsOfPromowaves.isPending
                         ? "Generating Images..."
+                        : isPromowaves
+                        ? "Generate Promowaves Images"
                         : "Generate Images for all Posts"}
                     </Button>
-                    {/* ✅ New bulk approve button */}
                     <Button
                       onClick={() =>
                         bulkApprovePosts.mutate({ scheduleId, workspaceId })
@@ -557,6 +626,16 @@ export default function ScheduleEditorPage() {
                         <TableHead className="w-[500px] py-4 font-semibold text-slate-900 dark:text-slate-100">
                           Content
                         </TableHead>
+                        {isPromowaves && (
+                          <>
+                            <TableHead className="w-48 py-4 font-semibold text-slate-900 dark:text-slate-100">
+                              Store Name
+                            </TableHead>
+                            <TableHead className="w-48 py-4 font-semibold text-slate-900 dark:text-slate-100">
+                              Store URL
+                            </TableHead>
+                          </>
+                        )}
                         <TableHead className="w-48 py-4 font-semibold text-slate-900 dark:text-slate-100">
                           Hashtags
                         </TableHead>
@@ -595,6 +674,27 @@ export default function ScheduleEditorPage() {
                           <TableCell className="py-6 align-top text-sm whitespace-normal max-w-[500px]">
                             {post.content || "No content"}
                           </TableCell>
+                          {isPromowaves && (
+                            <>
+                              <TableCell className="py-6 align-top text-sm">
+                                {post.storeName || "N/A"}
+                              </TableCell>
+                              <TableCell className="py-6 align-top text-sm">
+                                {post.storeUrl ? (
+                                  <a
+                                    href={post.storeUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-blue-600 hover:underline"
+                                  >
+                                    {post.storeUrl}
+                                  </a>
+                                ) : (
+                                  "N/A"
+                                )}
+                              </TableCell>
+                            </>
+                          )}
                           <TableCell className="py-6 align-top text-sm whitespace-normal">
                             {post.hashtags.map((tag) => `#${tag}`).join(", ") ||
                               "None"}

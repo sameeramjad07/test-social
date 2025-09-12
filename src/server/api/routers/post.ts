@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { Platform, PostStatus } from "@prisma/client";
+import axios from "axios";
 import { TRPCError } from "@trpc/server";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
 import {
@@ -10,9 +11,15 @@ import {
 import OpenAI from "openai";
 import { format } from "date-fns";
 import type { SupportedPlatform } from "@/app/(clientSide)/workspace/[workspaceId]/schedule/[scheduleId]/posts/[postId]/page";
-import { uploadGeneratedImage } from "@/lib/uploadthing-server";
+import { uploadGeneratedImage, uploadGeneratedImageFromBase64 } from "@/lib/uploadthing-server";
+import { fetchAndSelectStore, type Store } from "@/lib/promoStores";
+import { GoogleGenAI } from "@google/genai";
+import { env } from "@/env";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
+const genAI = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
+
 
 const listPostsSchema = z.object({
   workspaceId: z.string(),
@@ -49,6 +56,8 @@ const createPostSchema = z.object({
   status: z.nativeEnum(PostStatus).default(PostStatus.DRAFT),
   aiPrompt: z.string().optional(),
   aiModel: z.string().optional(),
+  storeName: z.string().optional(), // Added
+  storeUrl: z.string().optional(), // Added
 });
 
 const updatePostSchema = z.object({
@@ -368,6 +377,23 @@ export const postsRouter = createTRPCRouter({
         }
       }
 
+      // If storeName is provided, verify it exists and log it
+      if (
+        input.storeName &&
+        input.storeUrl &&
+        // input.workspaceId === "cmfcejqiw003go25g2vwaqiia" // PostWaves Promowaves ID
+        input.workspaceId === "cmdyoea02003f5d05xo4gpw8h" // Promowaves ID in Neon DB
+      ) {
+        await ctx.db.usedStore.create({
+          data: {
+            workspaceId: input.workspaceId,
+            scheduleId: input.scheduleId,
+            storeName: input.storeName,
+            storeUrl: input.storeUrl,
+          },
+        });
+      }
+
       // Create post with related data
       return ctx.db.post.create({
         data: {
@@ -382,6 +408,8 @@ export const postsRouter = createTRPCRouter({
           aiPrompt: input.aiPrompt,
           aiModel: input.aiModel,
           scheduleId: input.scheduleId,
+          storeName: input.storeName,
+          storeUrl: input.storeUrl,
           socialAccounts: {
             connect: input.socialAccountIds.map((id) => ({ id })),
           },
@@ -447,6 +475,8 @@ export const postsRouter = createTRPCRouter({
           aiPrompt: true,
           aiModel: true,
           scheduleId: true,
+          storeName: true,
+          storeUrl: true,
           socialAccounts: {
             select: {
               id: true,
@@ -556,19 +586,19 @@ export const postsRouter = createTRPCRouter({
           status: PostStatus.DRAFT,
           images: imageUrl
             ? {
-                upsert: {
-                  where: { id: post.images[0]?.id || "dummy-id" },
-                  create: {
-                    url: imageUrl,
-                    order: 0,
-                    isApproved: false,
-                  },
-                  update: {
-                    url: imageUrl,
-                    isApproved: false,
-                  },
+              upsert: {
+                where: { id: post.images[0]?.id || "dummy-id" },
+                create: {
+                  url: imageUrl,
+                  order: 0,
+                  isApproved: false,
                 },
-              }
+                update: {
+                  url: imageUrl,
+                  isApproved: false,
+                },
+              },
+            }
             : undefined,
         },
       });
@@ -726,6 +756,7 @@ export const postsRouter = createTRPCRouter({
 
           for (let i = 0; i < schedule.postsPerSlot; i++) {
             const postIndex = completed + 1;
+            const start = Date.now();
             const contentResponse = await openai.chat.completions.create({
               model: "gpt-4o-mini",
               messages: [
@@ -738,8 +769,8 @@ export const postsRouter = createTRPCRouter({
                     - content: the text of the post (max 280 chars if Twitter is included, 2200 for Instagram, 3000 for LinkedIn, 63206 for Facebook).
                     - hashtags: 3-5 hashtags, array of strings, no duplicates from the provided list.
                     Ensure content is unique, engaging, and tailored to the platforms: ${schedule.platforms.join(
-                      ", "
-                    )}.
+                    ", "
+                  )}.
                   `,
                 },
                 {
@@ -749,8 +780,8 @@ export const postsRouter = createTRPCRouter({
                     Post index: ${postIndex} of ${totalPosts}
                     Platforms: ${schedule.platforms.join(", ")}
                     Avoid reusing these hashtags: ${Array.from(
-                      usedHashtags
-                    ).join(", ")}
+                    usedHashtags
+                  ).join(", ")}
                     Scheduled date: ${format(scheduledAt, "PPP")}
                   `,
                 },
@@ -758,6 +789,8 @@ export const postsRouter = createTRPCRouter({
               temperature: 0.8,
               max_tokens: 500,
             });
+
+            const duration = (Date.now() - start) / 1000; // in seconds
 
             let parsed: {
               content: string;
@@ -785,7 +818,7 @@ export const postsRouter = createTRPCRouter({
             parsed.hashtags.forEach((h) => usedHashtags.add(h));
 
             // Create post
-            await ctx.db.post.create({
+            const post = await ctx.db.post.create({
               data: {
                 workspaceId,
                 createdById: ctx.session.user.id,
@@ -802,6 +835,23 @@ export const postsRouter = createTRPCRouter({
                   connect: socialAccounts.map(({ id }) => ({ id })),
                 },
                 scheduleId,
+              },
+            });
+
+            // ==== Add AI Generation Log ====
+            await ctx.db.aIGenerationLog.create({
+              data: {
+                userId: ctx.session.user.id,
+                workspaceId,
+                postId: post.id,
+                scheduleId,
+                type: "TEXT", // from AIGenerationType enum
+                prompt,
+                model: "gpt-4o-mini",
+                tokens: contentResponse.usage?.total_tokens ?? null,
+                duration,
+                status: "COMPLETED", // from AIGenerationStatus enum
+                cost: 0, // if you track OpenAI costs, calculate here
               },
             });
 
@@ -917,12 +967,15 @@ export const postsRouter = createTRPCRouter({
           `Generate a relevant image for the post content: ${post.content}`;
 
         try {
+          const start = Date.now();
           const response = await openai.images.generate({
             model: "dall-e-3",
             prompt: effectivePrompt,
             n: 1,
             size: "1024x1024",
           });
+
+          const duration = (Date.now() - start) / 1000;
 
           if (!response.data || !response.data[0]) {
             throw new TRPCError({
@@ -942,26 +995,55 @@ export const postsRouter = createTRPCRouter({
 
           const uploadUrl = await uploadGeneratedImage(imageUrl);
 
+          // Log AI generation
+          const aiGeneration = await ctx.db.aIGenerationLog.create({
+            data: {
+              userId: ctx.session.user.id,
+              workspaceId,
+              postId: post.id,
+              scheduleId,
+              type: "IMAGE",
+              prompt: effectivePrompt,
+              model: "dall-e-3",
+              imageSize: "1024x1024",
+              duration, // Update with actual duration if available
+              status: "COMPLETED",
+              cost: 0, // Update with actual cost if applicable
+            },
+          });
+
+          let postImage;
           if (post.images.length > 0 && post.images[0]?.id) {
-            await ctx.db.postImage.update({
+            postImage = await ctx.db.postImage.update({
               where: { id: post.images[0].id },
               data: {
                 url: uploadUrl,
                 aiPrompt: effectivePrompt,
                 isApproved: false,
+                aiGenerationId: aiGeneration.id,
               },
             });
           } else {
-            await ctx.db.postImage.create({
+            postImage = await ctx.db.postImage.create({
               data: {
                 postId: post.id,
                 url: uploadUrl,
                 aiPrompt: effectivePrompt,
                 isApproved: false,
                 order: 0,
+                aiGenerationId: aiGeneration.id,
               },
             });
           }
+
+          // 3. Update the AI generation log with the imageId + mark completed
+          await ctx.db.aIGenerationLog.update({
+            where: { id: aiGeneration.id },
+            data: {
+              imageId: postImage.id,
+              status: "COMPLETED",
+            },
+          });
 
           await ctx.db.post.update({
             where: { id: post.id },
@@ -984,6 +1066,582 @@ export const postsRouter = createTRPCRouter({
       return { success: true, imagesGenerated: completed };
     }),
 
+  generateBulkPostsForPromowaves: protectedProcedure
+    .input(
+      z.object({
+        scheduleId: z.string(),
+        workspaceId: z.string(),
+        prompt: z.string().min(1),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { scheduleId, workspaceId, prompt } = input;
+
+      // Authorization checks (unchanged)
+      if (!ctx.session.user.id) {
+        throw new TRPCError({
+          code: "UNAUTHORIZED",
+          message: "User session not found",
+        });
+      }
+      const member = await ctx.db.workspaceMember.findFirst({
+        where: {
+          workspaceId,
+          userId: ctx.session.user.id,
+        },
+        include: {
+          role: {
+            include: {
+              permissions: {
+                include: { permission: true },
+              },
+            },
+          },
+        },
+      });
+      if (!member) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Not a member of this workspace",
+        });
+      }
+      const hasPermission =
+        member.role.name === "owner" ||
+        member.role.permissions.some(
+          (rp) =>
+            rp.permission.resource === "posts" &&
+            rp.permission.action === "create"
+        );
+      if (!hasPermission) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You don't have permission to create posts",
+        });
+      }
+
+      const schedule = await ctx.db.postSchedule.findUnique({
+        where: { id: scheduleId },
+        include: { posts: true },
+      });
+      if (!schedule || schedule.workspaceId !== workspaceId) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Schedule not found",
+        });
+      }
+      if (schedule.isActive) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Cannot generate posts for active schedule",
+        });
+      }
+      if (schedule.posts.length > 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Posts already generated for this schedule",
+        });
+      }
+
+      // Calculate dates (unchanged)
+      const dates = [];
+      let current = new Date(schedule.startDate);
+      const end = schedule.endDate
+        ? new Date(schedule.endDate)
+        : new Date(current.getTime() + 30 * 24 * 60 * 60 * 1000);
+      while (current <= end) {
+        let include = false;
+        const dayOfWeek = current.getDay();
+        const dayOfMonth = current.getDate();
+        switch (schedule.frequency) {
+          case "DAILY":
+            include = true;
+            break;
+          case "WEEKLY":
+            if (schedule.weekDays?.includes(dayOfWeek)) include = true;
+            break;
+          case "MONTHLY":
+            if (schedule.monthDays?.includes(dayOfMonth)) include = true;
+            break;
+          case "CUSTOM":
+            if (
+              schedule.weekDays?.includes(dayOfWeek) ||
+              schedule.monthDays?.includes(dayOfMonth)
+            )
+              include = true;
+            break;
+        }
+        if (include) dates.push(new Date(current));
+        current.setDate(current.getDate() + 1);
+      }
+
+      const totalPosts =
+        schedule.postsPerSlot * schedule.timeSlots.length * dates.length;
+
+      // Initialize progress
+      await ctx.db.postGenerationProgress.upsert({
+        where: { scheduleId },
+        create: { scheduleId, total: totalPosts, completed: 0 },
+        update: { total: totalPosts, completed: 0 },
+      });
+
+      const socialAccounts = await ctx.db.socialAccount.findMany({
+        where: {
+          workspaceId,
+          platform: { in: schedule.platforms },
+          isActive: true,
+        },
+        select: { id: true },
+      });
+
+      const workspace = await ctx.db.workspace.findUnique({
+        where: { id: workspaceId },
+        select: { logoUrl: true },
+      });
+
+      let completed = 0;
+      const usedHashtags: Set<string> = new Set(schedule.hashtags || []);
+
+      for (const date of dates) {
+        for (const timeSlot of schedule.timeSlots) {
+          const [hh, mm] = timeSlot.split(":").map(Number);
+          if (hh === undefined || mm === undefined || isNaN(hh) || isNaN(mm)) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: `Invalid time slot format: ${timeSlot}`,
+            });
+          }
+          const scheduledAt = new Date(date);
+          scheduledAt.setHours(hh, mm, 0, 0);
+
+          for (let i = 0; i < schedule.postsPerSlot; i++) {
+            const postIndex = completed + 1;
+
+            // Fetch a random unused store
+            const store = await fetchAndSelectStore(
+              ctx,
+              workspaceId,
+              scheduleId
+            );
+
+            // Measure duration (if you want to track how long each call took)
+            const startTime = Date.now();
+
+            // Generate post content
+            const contentResponse = await openai.chat.completions.create({
+              model: "gpt-4o-mini",
+              messages: [
+                {
+                  role: "system",
+                  content: `
+                    You are an AI content creator for an affiliate marketing platform.
+                    Generate exactly one social media post for the Promowaves workspace.
+                    Your output must be valid JSON with the following keys:
+                    - content: the text of the post (max 280 chars if Twitter is included, 2200 for Instagram, 3000 for LinkedIn, 63206 for Facebook).
+                    - hashtags: 3-5 hashtags, array of strings, no duplicates from the provided list.
+                    Use the store details to create an engaging post:
+                    - Store Name: ${store.name}
+                    - Description: ${store.description || "No description available"
+                    }
+                    - Category: ${store.category}
+                    - Display URL: ${store.displayUrl}
+                    Ensure content is unique, promotional, and tailored to the platforms: ${schedule.platforms.join(
+                      ", "
+                    )}.
+                  `,
+                },
+                {
+                  role: "user",
+                  content: `
+                    Global prompt: "${prompt}"
+                    Post index: ${postIndex} of ${totalPosts}
+                    Platforms: ${schedule.platforms.join(", ")}
+                    Avoid reusing these hashtags: ${Array.from(
+                    usedHashtags
+                  ).join(", ")}
+                    Scheduled date: ${format(scheduledAt, "PPP")}
+                  `,
+                },
+              ],
+              temperature: 0.8,
+              max_tokens: 500,
+            });
+
+            const duration = (Date.now() - startTime) / 1000; // in seconds
+
+            let parsed: { content: string; hashtags: string[] } = {
+              content: "",
+              hashtags: [],
+            };
+            try {
+              parsed = JSON.parse(
+                contentResponse.choices[0]?.message?.content || "{}"
+              );
+            } catch (err) {
+              parsed = {
+                content: `Discover ${store.name} at ${store.displayUrl}! Shop now for great deals!`,
+                hashtags: [`#${store.category.replace(/\s/g, "")}`, "#ShopNow"],
+              };
+            }
+
+            // Deduplicate hashtags
+            parsed.hashtags = parsed.hashtags.filter(
+              (h) => !usedHashtags.has(h)
+            );
+            parsed.hashtags.forEach((h) => usedHashtags.add(h));
+
+            // Create post with store details
+            const post = await ctx.db.post.create({
+              data: {
+                workspaceId,
+                createdById: ctx.session.user.id,
+                content: parsed.content,
+                hashtags: [...(schedule.hashtags || []), ...parsed.hashtags],
+                mentions: [],
+                status: PostStatus.CONTENT_APPROVED,
+                contentApproved: false,
+                imagesApproved: false,
+                scheduledAt,
+                aiPrompt: prompt,
+                aiModel: "gpt-4o-mini",
+                socialAccounts: {
+                  connect: socialAccounts.map(({ id }) => ({ id })),
+                },
+                scheduleId,
+                storeName: store.name, // Store store name
+                storeUrl: store.displayUrl, // Store store URL
+              },
+            });
+
+            // ==== Add AI Generation Log ====
+            await ctx.db.aIGenerationLog.create({
+              data: {
+                userId: ctx.session.user.id,
+                workspaceId,
+                postId: post.id,
+                scheduleId,
+                type: "TEXT", // from AIGenerationType enum
+                prompt,
+                model: "gpt-4o-mini",
+                tokens: contentResponse.usage?.total_tokens ?? null,
+                duration,
+                status: "COMPLETED", // from AIGenerationStatus enum
+                cost: 0, // if you track OpenAI costs, calculate here
+              },
+            });
+
+            completed++;
+            await ctx.db.postGenerationProgress.update({
+              where: { scheduleId },
+              data: { completed },
+            });
+          }
+        }
+      }
+
+      await ctx.db.postSchedule.update({
+        where: { id: scheduleId },
+        data: { lastGeneratedAt: new Date() },
+      });
+
+      return { success: true };
+    }),
+
+  generateImagesForAllPostsOfPromowaves: protectedProcedure
+    .input(z.object({ scheduleId: z.string(), workspaceId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const { scheduleId, workspaceId } = input;
+
+      // Authorization checks (unchanged)
+      if (!ctx.session.user.id) {
+        throw new TRPCError({
+          code: "UNAUTHORIZED",
+          message: "User session not found",
+        });
+      }
+      const member = await ctx.db.workspaceMember.findFirst({
+        where: {
+          workspaceId,
+          userId: ctx.session.user.id,
+        },
+        include: {
+          role: {
+            include: {
+              permissions: {
+                include: { permission: true },
+              },
+            },
+          },
+        },
+      });
+      if (!member) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Not a member of this workspace",
+        });
+      }
+      const hasPermission =
+        member.role.name === "owner" ||
+        member.role.permissions.some(
+          (rp) =>
+            rp.permission.resource === "posts" &&
+            rp.permission.action === "update"
+        );
+      if (!hasPermission) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You don't have permission to update posts",
+        });
+      }
+
+      const schedule = await ctx.db.postSchedule.findUnique({
+        where: { id: scheduleId },
+        include: { posts: { include: { images: true } } },
+      });
+      if (!schedule || schedule.workspaceId !== workspaceId) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Schedule not found",
+        });
+      }
+      if (schedule.isActive) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Cannot generate images for active schedule",
+        });
+      }
+
+      const posts = schedule.posts.filter(
+        (post) => post.status === PostStatus.CONTENT_APPROVED
+      );
+      if (posts.length === 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "No posts with approved content available for image generation",
+        });
+      }
+
+      const totalImages = posts.length;
+
+      await ctx.db.postGenerationProgress.upsert({
+        where: { scheduleId },
+        create: { scheduleId, total: totalImages, completed: 0 },
+        update: { total: totalImages, completed: 0 },
+      });
+
+      const workspace = await ctx.db.workspace.findUnique({
+        where: { id: workspaceId },
+        select: { logoUrl: true },
+      });
+      if (!workspace || !workspace.logoUrl) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Workspace logo not found",
+        });
+      }
+
+      let completed = 0;
+      for (const post of posts) {
+        // Fetch the store details from UsedStore table
+        const usedStore = await ctx.db.usedStore.findFirst({
+          where: { workspaceId, scheduleId, storeName: post.storeName || "" },
+        });
+
+        if (!usedStore) {
+          console.error(`No store found for post ${post.id}`);
+          continue;
+        }
+
+        // Fetch store details from API to get logo
+        const storeResponse = await axios.get(
+          "https://promowaves.net/api/getStores"
+        );
+        const store = storeResponse.data.find(
+          (s: Store) => s.name === post.storeName
+        );
+
+        if (!store || !store.logo) {
+          console.error(`Store or logo not found for ${post.storeName}`);
+          continue;
+        }
+
+        const effectivePrompt =
+          schedule.imagePrompt ||
+          `Create a professional promotional banner for social media marketing.
+                Design Requirements:
+                - Format: Eye-catching discount promotion banner optimized for social media
+                - Featured Elements:
+                • Promowaves logo (top or corner placement)
+                • ${store.name} logo (prominent co-branding)
+                • " ${store.description} " store Desctiption
+                • Bold discount percentage or offer (e.g., "50% OFF", "FLASH SALE", "LIMITED TIME")
+                • Call-to-action text (e.g., "Shop Now", "Get Deal", "Save Today")
+                • Promo code if applicable (in readable, standout format)
+
+                Visual Style:
+                - Design aesthetic: Modern, vibrant, high-converting promotional graphics
+                - Color scheme: High contrast with attention-grabbing elements
+                - Category theme: ${store.category} industry visuals as subtle background
+                - Typography: Bold, readable fonts that command attention
+                - Layout: Professional banner composition with clear visual hierarchy
+
+                Technical Specs:
+                - Optimized for ${'social media'} dimensions
+                - High resolution with crisp text rendering
+                - Mobile-friendly readability
+                - Professional retail promotion quality`;
+
+        try {
+          const start = Date.now();
+
+          // Prepare content array with logos if they exist
+          const promptContent = [];
+
+          // Add text prompt
+          promptContent.push({ text: effectivePrompt });
+
+          // Add workspace logo if available
+          if (workspace.logoUrl) {
+            const logoResponse = await fetch(workspace.logoUrl);
+            const logoBuffer = await logoResponse.arrayBuffer();
+            const nodeBuffer = Buffer.from(logoBuffer);
+            const logoBase64 = nodeBuffer.toString('base64');
+
+            promptContent.push({
+              inlineData: {
+                mimeType: "image/png",
+                data: logoBase64,
+              },
+            });
+          }
+
+          // Add store logo if available
+          if (store.logo) {
+            const storeLogoResponse = await fetch(store.logo);
+            const storeLogoBuffer = await storeLogoResponse.arrayBuffer();
+            const nodeBuffer = Buffer.from(storeLogoBuffer);
+            const storeLogoBase64 = nodeBuffer.toString('base64');
+
+            promptContent.push({
+              inlineData: {
+                mimeType: "image/png",
+                data: storeLogoBase64,
+              },
+            });
+          }
+
+          // Generate image using Nano Banana
+          const response = await genAI.models.generateContent({
+            model: "gemini-2.5-flash-image-preview",
+            contents: promptContent,
+          });
+
+          const duration = (Date.now() - start) / 1000; // in seconds
+
+          // Extract generated image from response
+          let imageBase64: string | null | undefined = null;
+
+
+          const candidates = response.candidates ?? [];
+          if (candidates.length > 0) {
+            const parts = candidates[0]?.content?.parts ?? [];
+            for (const part of parts) {
+              if (part.inlineData?.data) {
+                imageBase64 = part.inlineData.data;
+                break;
+              }
+            }
+          }
+
+
+          if (!imageBase64) {
+            throw new Error("No image generated in response");
+          }
+
+          // Upload the generated image using UploadThing
+          const uploadUrl = await uploadGeneratedImageFromBase64(imageBase64);
+
+          // Log AI generation
+          const aiGeneration = await ctx.db.aIGenerationLog.create({
+            data: {
+              userId: ctx.session.user.id,
+              workspaceId,
+              postId: post.id,
+              scheduleId,
+              type: "IMAGE",
+              prompt: effectivePrompt,
+              model: "gemini-2.5-flash-image-preview",
+              imageSize: "1024x1024",
+              duration,
+              status: "COMPLETED",
+              cost: 0,
+            },
+          });
+
+          let postImage;
+          if (post.images.length > 0 && post.images[0]?.id) {
+            postImage = await ctx.db.postImage.update({
+              where: { id: post.images[0].id },
+              data: {
+                url: uploadUrl,
+                aiPrompt: effectivePrompt,
+                isApproved: false,
+                aiGenerationId: aiGeneration.id,
+              },
+            });
+          } else {
+            postImage = await ctx.db.postImage.create({
+              data: {
+                postId: post.id,
+                url: uploadUrl,
+                aiPrompt: effectivePrompt,
+                isApproved: false,
+                order: 0,
+                aiGenerationId: aiGeneration.id,
+              },
+            });
+          }
+
+          // Update the AI generation log with the imageId
+          await ctx.db.aIGenerationLog.update({
+            where: { id: aiGeneration.id },
+            data: {
+              imageId: postImage.id,
+              status: "COMPLETED",
+            },
+          });
+
+          completed++;
+          await ctx.db.postGenerationProgress.update({
+            where: { scheduleId },
+            data: { completed },
+          });
+        } catch (error) {
+          console.error(`Failed to generate image for post ${post.id}:`, error);
+
+          // Log failed generation
+          await ctx.db.aIGenerationLog.create({
+            data: {
+              userId: ctx.session.user.id,
+              workspaceId,
+              postId: post.id,
+              scheduleId,
+              type: "IMAGE",
+              prompt: effectivePrompt,
+              model: "gemini-2.5-flash-image-preview",
+              imageSize: "1024x1024",
+              duration: 0,
+              status: "FAILED",
+              error: error instanceof Error ? error.message : "Unknown error",
+              cost: 0,
+            },
+          });
+          continue;
+        }
+      }
+
+      return { success: true, imagesGenerated: completed };
+    }),
   getGenerationProgress: protectedProcedure
     .input(z.object({ scheduleId: z.string() }))
     .query(async ({ ctx, input }) => {
