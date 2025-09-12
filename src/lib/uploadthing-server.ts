@@ -28,14 +28,19 @@ export async function uploadGeneratedImage(imageUrl: string): Promise<string> {
 export async function uploadGeneratedImageFromBase64(base64Data: string): Promise<string> {
   // Convert base64 to buffer
   const buffer = Buffer.from(base64Data, 'base64');
-  
+
   // Create a unique filename
   const uniqueName = `generated-${Date.now()}-${randomUUID()}.png`;
+  let uploaded;
+  try {
+    // Upload directly to UploadThing
+    uploaded = await utapi.uploadFiles([
+      new File([buffer], uniqueName, { type: "image/png" }),
+    ]);
+  } catch (e) {
+    throw new Error(`Failed To upload Image to upload thing : ${e}`);
+  }
 
-  // Upload directly to UploadThing
-  const uploaded = await utapi.uploadFiles([
-    new File([buffer], uniqueName, { type: "image/png" }),
-  ]);
 
   const file = uploaded[0];
 
