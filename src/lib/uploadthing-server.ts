@@ -22,7 +22,7 @@ export async function uploadGeneratedImage(imageUrl: string): Promise<string> {
     throw new Error("UploadThing did not return a valid file URL");
   }
 
-  return file.data.url; // ✅ unique file URL
+  return file.data.ufsUrl; // ✅ unique file URL
 }
 
 export async function uploadGeneratedImageFromBase64(base64Data: string): Promise<string> {
@@ -53,5 +53,5 @@ export async function uploadGeneratedImageFromBase64(base64Data: string): Promis
     throw new Error("UploadThing did not return a valid file URL");
   }
 
-  return file.data.url;
+  return file.data.ufsUrl;
 }
