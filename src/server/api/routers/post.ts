@@ -11,15 +11,16 @@ import {
 import OpenAI from "openai";
 import { format } from "date-fns";
 import type { SupportedPlatform } from "@/app/(clientSide)/workspace/[workspaceId]/schedule/[scheduleId]/posts/[postId]/page";
-import { uploadGeneratedImage, uploadGeneratedImageFromBase64 } from "@/lib/uploadthing-server";
+import {
+  uploadGeneratedImage,
+  uploadGeneratedImageFromBase64,
+} from "@/lib/uploadthing-server";
 import { fetchAndSelectStore, type Store } from "@/lib/promoStores";
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Modality } from "@google/genai";
 import { env } from "@/env";
-
 
 const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
 const genAI = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
-
 
 const listPostsSchema = z.object({
   workspaceId: z.string(),
@@ -586,19 +587,19 @@ export const postsRouter = createTRPCRouter({
           status: PostStatus.DRAFT,
           images: imageUrl
             ? {
-              upsert: {
-                where: { id: post.images[0]?.id || "dummy-id" },
-                create: {
-                  url: imageUrl,
-                  order: 0,
-                  isApproved: false,
+                upsert: {
+                  where: { id: post.images[0]?.id || "dummy-id" },
+                  create: {
+                    url: imageUrl,
+                    order: 0,
+                    isApproved: false,
+                  },
+                  update: {
+                    url: imageUrl,
+                    isApproved: false,
+                  },
                 },
-                update: {
-                  url: imageUrl,
-                  isApproved: false,
-                },
-              },
-            }
+              }
             : undefined,
         },
       });
@@ -769,8 +770,8 @@ export const postsRouter = createTRPCRouter({
                     - content: the text of the post (max 280 chars if Twitter is included, 2200 for Instagram, 3000 for LinkedIn, 63206 for Facebook).
                     - hashtags: 3-5 hashtags, array of strings, no duplicates from the provided list.
                     Ensure content is unique, engaging, and tailored to the platforms: ${schedule.platforms.join(
-                    ", "
-                  )}.
+                      ", "
+                    )}.
                   `,
                 },
                 {
@@ -780,8 +781,8 @@ export const postsRouter = createTRPCRouter({
                     Post index: ${postIndex} of ${totalPosts}
                     Platforms: ${schedule.platforms.join(", ")}
                     Avoid reusing these hashtags: ${Array.from(
-                    usedHashtags
-                  ).join(", ")}
+                      usedHashtags
+                    ).join(", ")}
                     Scheduled date: ${format(scheduledAt, "PPP")}
                   `,
                 },
@@ -1201,6 +1202,18 @@ export const postsRouter = createTRPCRouter({
       let completed = 0;
       const usedHashtags: Set<string> = new Set(schedule.hashtags || []);
 
+      // Predefined engaging post templates focusing on Promowaves affiliate benefits
+      const postTemplates = [
+        "🚨 EXCLUSIVE DEAL ALERT! Get amazing discounts on {storeName} through Promowaves! 💰 Save big + earn cashback rewards! 🎯",
+        "💸 Smart shoppers choose Promowaves! Discover {storeName} deals with extra savings & commission rewards! 🛍️✨",
+        "🔥 LIMITED TIME: {storeName} + Promowaves = Double the savings! Get your exclusive discount now! ⏰💎",
+        "💰 Why pay full price? Shop {storeName} through Promowaves and get cashback + exclusive deals! 🎁🚀",
+        "🛍️ PROMOWAVES EXCLUSIVE: Unlock hidden savings at {storeName}! Your wallet will thank you! 💳✨",
+        "⚡ Flash Deal Alert! {storeName} via Promowaves = Instant savings + commission rewards! Don't miss out! 🏃‍♂️💨",
+        "🎯 Pro tip: Always shop through Promowaves! Get {storeName} deals + earn while you save! 💪🔥",
+        "🌟 TRENDING NOW: {storeName} exclusive offers only on Promowaves! Join thousands saving smart! 📈💰",
+      ];
+
       for (const date of dates) {
         for (const timeSlot of schedule.timeSlots) {
           const [hh, mm] = timeSlot.split(":").map(Number);
@@ -1223,65 +1236,139 @@ export const postsRouter = createTRPCRouter({
               scheduleId
             );
 
-            // Measure duration (if you want to track how long each call took)
+            // Get character limits for platforms
+            const maxChars = Math.min(
+              ...schedule.platforms.map((platform) => {
+                switch (platform.toLowerCase()) {
+                  case "twitter":
+                  case "x":
+                    return 280;
+                  case "instagram":
+                    return 2200;
+                  case "linkedin":
+                    return 3000;
+                  case "facebook":
+                    return 63206;
+                  default:
+                    return 280;
+                }
+              })
+            );
+
+            // Select a random template
+            const template =
+              postTemplates[Math.floor(Math.random() * postTemplates.length)] ??
+              "🔥 Shop {storeName} through Promowaves for cashback + discounts!";
+
             const startTime = Date.now();
 
-            // Generate post content
+            // Enhanced prompt for better Promowaves-focused content
             const contentResponse = await openai.chat.completions.create({
               model: "gpt-4o-mini",
               messages: [
                 {
                   role: "system",
                   content: `
-                    You are an AI content creator for an affiliate marketing platform.
-                    Generate exactly one social media post for the Promowaves workspace.
-                    Your output must be valid JSON with the following keys:
-                    - content: the text of the post (max 280 chars if Twitter is included, 2200 for Instagram, 3000 for LinkedIn, 63206 for Facebook).
-                    - hashtags: 3-5 hashtags, array of strings, no duplicates from the provided list.
-                    Use the store details to create an engaging post:
-                    - Store Name: ${store.name}
-                    - Description: ${store.description || "No description available"
-                    }
+                    You are an expert social media content creator for PROMOWAVES - a leading affiliate marketing platform.
+                    
+                    BRAND IDENTITY:
+                    - Promowaves is THE affiliate marketing platform for smart shoppers
+                    - Users get CASHBACK + EXCLUSIVE DISCOUNTS when shopping through Promowaves
+                    - We partner with top stores to provide the best deals
+                    - Our value proposition: "Why pay full price when you can save + earn?"
+                    
+                    CONTENT REQUIREMENTS:
+                    - ALWAYS mention "Promowaves" prominently in every post
+                    - Highlight the DUAL BENEFIT: savings + cashback/commission
+                    - Use action-oriented, FOMO-inducing language
+                    - Include clear call-to-action
+                    - Stay within ${maxChars} characters
+                    - Make it feel exclusive and urgent
+                    
+                    TONE: Exciting, benefit-focused, trustworthy, urgent
+                    
+                    OUTPUT FORMAT: Valid JSON with keys:
+                    - content: engaging post text emphasizing Promowaves benefits
+                    - hashtags: 3-5 relevant hashtags (array of strings)
+                    
+                    STORE CONTEXT:
+                    - Store: ${store.name}
                     - Category: ${store.category}
-                    - Display URL: ${store.displayUrl}
-                    Ensure content is unique, promotional, and tailored to the platforms: ${schedule.platforms.join(
-                      ", "
-                    )}.
+                    - Description: ${
+                      store.description || "Premium quality products"
+                    }
+                    - URL: ${store.displayUrl}
                   `,
                 },
                 {
                   role: "user",
                   content: `
-                    Global prompt: "${prompt}"
-                    Post index: ${postIndex} of ${totalPosts}
-                    Platforms: ${schedule.platforms.join(", ")}
-                    Avoid reusing these hashtags: ${Array.from(
-                    usedHashtags
-                  ).join(", ")}
-                    Scheduled date: ${format(scheduledAt, "PPP")}
+                    Create an engaging post using this template as inspiration: "${template}"
+                    
+                    Requirements:
+                    - Post ${postIndex} of ${totalPosts}
+                    - Platforms: ${schedule.platforms.join(", ")}
+                    - Global prompt context: "${prompt}"
+                    - Scheduled for: ${format(scheduledAt, "PPP")}
+                    - Must emphasize Promowaves as the affiliate platform
+                    - Show both store benefits AND Promowaves advantages
+                    - Avoid these hashtags: ${Array.from(usedHashtags).join(
+                      ", "
+                    )}
+                    - Include store name: ${store.name}
+                    - Make it feel like an exclusive deal through Promowaves
+                    
+                    Focus on why shopping through Promowaves is better than direct shopping!
                   `,
                 },
               ],
-              temperature: 0.8,
+              temperature: 0.9,
               max_tokens: 500,
             });
 
-            const duration = (Date.now() - startTime) / 1000; // in seconds
+            const duration = (Date.now() - startTime) / 1000;
 
             let parsed: { content: string; hashtags: string[] } = {
               content: "",
               hashtags: [],
             };
+
             try {
               parsed = JSON.parse(
                 contentResponse.choices[0]?.message?.content || "{}"
               );
             } catch (err) {
+              // Enhanced fallback content with Promowaves focus
+              const fallbackTemplate = template.replace(
+                "{storeName}",
+                store.name
+              );
               parsed = {
-                content: `Discover ${store.name} at ${store.displayUrl}! Shop now for great deals!`,
-                hashtags: [`#${store.category.replace(/\s/g, "")}`, "#ShopNow"],
+                content: `${fallbackTemplate} Shop through Promowaves and get exclusive cashback rewards! 🔗 ${store.displayUrl}`,
+                hashtags: [
+                  `#Promowaves`,
+                  `#${store.category.replace(/\s/g, "")}`,
+                  "#CashbackDeals",
+                  "#ExclusiveOffers",
+                ],
               };
             }
+
+            // Ensure Promowaves is mentioned if somehow missing
+            if (!parsed.content.toLowerCase().includes("promowaves")) {
+              parsed.content = `🔥 Promowaves Exclusive: ${parsed.content}`;
+            }
+
+            // Add mandatory Promowaves hashtag
+            const promoHashtags = [
+              "#Promowaves",
+              "#AffiliateDeals",
+              "#CashbackRewards",
+            ];
+            parsed.hashtags = [
+              ...promoHashtags,
+              ...parsed.hashtags.filter((h) => !promoHashtags.includes(h)),
+            ];
 
             // Deduplicate hashtags
             parsed.hashtags = parsed.hashtags.filter(
@@ -1289,7 +1376,7 @@ export const postsRouter = createTRPCRouter({
             );
             parsed.hashtags.forEach((h) => usedHashtags.add(h));
 
-            // Create post with store details
+            // Create post with enhanced store details
             const post = await ctx.db.post.create({
               data: {
                 workspaceId,
@@ -1307,25 +1394,25 @@ export const postsRouter = createTRPCRouter({
                   connect: socialAccounts.map(({ id }) => ({ id })),
                 },
                 scheduleId,
-                storeName: store.name, // Store store name
-                storeUrl: store.displayUrl, // Store store URL
+                storeName: store.name,
+                storeUrl: store.displayUrl,
               },
             });
 
-            // ==== Add AI Generation Log ====
+            // Add AI Generation Log
             await ctx.db.aIGenerationLog.create({
               data: {
                 userId: ctx.session.user.id,
                 workspaceId,
                 postId: post.id,
                 scheduleId,
-                type: "TEXT", // from AIGenerationType enum
-                prompt,
+                type: "TEXT",
+                prompt: `${prompt} | Template: ${template}`,
                 model: "gpt-4o-mini",
                 tokens: contentResponse.usage?.total_tokens ?? null,
                 duration,
-                status: "COMPLETED", // from AIGenerationStatus enum
-                cost: 0, // if you track OpenAI costs, calculate here
+                status: "COMPLETED",
+                cost: 0,
               },
             });
 
@@ -1460,89 +1547,66 @@ export const postsRouter = createTRPCRouter({
           (s: Store) => s.name === post.storeName
         );
 
-        if (!store || !store.logo) {
-          console.error(`Store or logo not found for ${post.storeName}`);
+        if (!store) {
+          console.error(`Store not found for ${post.storeName}`);
           continue;
         }
 
+        // Enhanced image prompt focusing on affiliate marketing banner design
         const effectivePrompt =
           schedule.imagePrompt ||
-          `Create a professional promotional banner for social media marketing.
-                Design Requirements:
-                - Format: Eye-catching discount promotion banner optimized for social media
-                - Featured Elements:
-                • Promowaves logo (top or corner placement)
-                • ${store.name} logo (prominent co-branding)
-                • " ${store.description} " store Desctiption
-                • Bold discount percentage or offer (e.g., "50% OFF", "FLASH SALE", "LIMITED TIME")
-                • Call-to-action text (e.g., "Shop Now", "Get Deal", "Save Today")
-                • Promo code if applicable (in readable, standout format)
-
-                Visual Style:
-                - Design aesthetic: Modern, vibrant, high-converting promotional graphics
-                - Color scheme: High contrast with attention-grabbing elements
-                - Category theme: ${store.category} industry visuals as subtle background
-                - Typography: Bold, readable fonts that command attention
-                - Layout: Professional banner composition with clear visual hierarchy
-
-                Technical Specs:
-                - Optimized for ${'social media'} dimensions
-                - High resolution with crisp text rendering
-                - Mobile-friendly readability
-                - Professional retail promotion quality`;
+          `Create a professional affiliate marketing promotional banner for Promowaves platform.
+          
+          DESIGN SPECIFICATIONS:
+          - Format: Social media promotional banner (1200x630px ideal)
+          - Style: Modern, eye-catching affiliate marketing design
+          - Color scheme: Vibrant, high-converting colors with strong contrast
+          
+          REQUIRED ELEMENTS (in order of prominence):
+          1. Main headline: "EXCLUSIVE DEAL" or "SPECIAL OFFER" in bold, large text
+          2. Store name: "${store.name}" prominently displayed
+          3. Discount/offer text: "UP TO 50% OFF + CASHBACK" or similar compelling offer
+          4. Promowaves branding: "via Promowaves" or "Powered by Promowaves" 
+          5. Call-to-action: "SHOP NOW" or "GET DEAL" button
+          6. Category context: Subtle ${store.category} themed background elements
+          
+          LOGO PLACEMENT INSTRUCTIONS:
+          - Reserve TOP-LEFT corner for Promowaves logo placement
+          - Reserve TOP-RIGHT or BOTTOM-RIGHT corner for ${store.name} store logo placement
+          - Leave clear, defined spaces for both logos (don't overlap with text)
+          - Ensure logo areas have contrasting backgrounds for visibility
+          
+          VISUAL STYLE:
+          - Professional affiliate marketing aesthetic
+          - High contrast text for readability
+          - Gradient or solid backgrounds that make logos pop
+          - Modern typography with hierarchy
+          - Mobile-optimized design
+          - Trust-building elements (verified, secure, etc.)
+          
+          IMPORTANT: Do NOT generate actual logos - leave designated spaces for real logo placement. Focus on creating an engaging banner design that will showcase both the Promowaves and ${store.name} logos effectively when they are added as separate elements.`;
 
         try {
           const start = Date.now();
 
-          // Prepare content array with logos if they exist
-          const promptContent = [];
-
-          // Add text prompt
-          promptContent.push({ text: effectivePrompt });
-
-          // Add workspace logo if available
-          if (workspace.logoUrl) {
-            const logoResponse = await fetch(workspace.logoUrl);
-            const logoBuffer = await logoResponse.arrayBuffer();
-            const nodeBuffer = Buffer.from(logoBuffer);
-            const logoBase64 = nodeBuffer.toString('base64');
-
-            promptContent.push({
-              inlineData: {
-                mimeType: "image/png",
-                data: logoBase64,
-              },
-            });
-          }
-
-          // Add store logo if available
-          if (store.logo) {
-            const storeLogoResponse = await fetch(store.logo);
-            const storeLogoBuffer = await storeLogoResponse.arrayBuffer();
-            const nodeBuffer = Buffer.from(storeLogoBuffer);
-            const storeLogoBase64 = nodeBuffer.toString('base64');
-
-            promptContent.push({
-              inlineData: {
-                mimeType: "image/png",
-                data: storeLogoBase64,
-              },
-            });
-          }
-
-          // Generate image using Nano Banana
-          const response = await genAI.models.generateContent({
-            model: "gemini-2.5-flash-image-preview",
-            contents: promptContent,
+          // Create the banner first with text-only prompt
+          const contentResponse = await genAI.models.generateContent({
+            model: "gemini-2.0-flash-image-preview", // or another model that supports image output
+            contents:
+              effectivePrompt +
+              `\n\nContent context: "${post.content}"\nStore description: ${
+                store.description ?? "Quality products and services"
+              }`,
+            //config: {
+            //   responseModalities: [Modality.TEXT, Modality.IMAGE],
+            //   candidateCount: 1,
+            // },
           });
 
-          const duration = (Date.now() - start) / 1000; // in seconds
+          let imageBase64: string | null = null;
 
-          // Extract generated image from response
-          let imageBase64: string | null | undefined = null;
-
-
-          const candidates = response.candidates ?? [];
+          // Extract the generated banner
+          const candidates = contentResponse.candidates ?? [];
           if (candidates.length > 0) {
             const parts = candidates[0]?.content?.parts ?? [];
             for (const part of parts) {
@@ -1553,13 +1617,124 @@ export const postsRouter = createTRPCRouter({
             }
           }
 
-
           if (!imageBase64) {
-            throw new Error("No image generated in response");
+            throw new Error("No banner image generated in response");
           }
 
-          // Upload the generated image using UploadThing
-          const uploadUrl = await uploadGeneratedImageFromBase64(imageBase64);
+          // Now enhance the banner by adding the actual logos
+          const logoEnhancementPrompt = `
+            Take this promotional banner and enhance it by adding these specific elements:
+            
+            LOGO ADDITIONS REQUIRED:
+            1. Add the Promowaves logo in the designated top-left area
+            2. Add the ${store.name} store logo in the designated top-right or bottom-right area
+            3. Ensure both logos are clearly visible and professionally integrated
+            4. Maintain the banner's existing design while making logos prominent
+            5. Ensure logos complement the color scheme and don't clash
+            
+            INTEGRATION GUIDELINES:
+            - Logos should look naturally integrated, not just pasted on
+            - Add subtle shadows or effects to make logos blend well
+            - Ensure both logos are readable and high-quality
+            - Maintain the professional affiliate marketing aesthetic
+            - Keep the focus on the partnership between Promowaves and ${store.name}
+            
+            The result should be a cohesive affiliate marketing banner that clearly shows the partnership between Promowaves (affiliate platform) and ${store.name} (featured store).
+          `;
+
+          const enhancementContent = [
+            { text: logoEnhancementPrompt },
+            {
+              inlineData: {
+                mimeType: "image/png",
+                data: imageBase64,
+              },
+            },
+          ];
+
+          // Add Promowaves logo if available
+          if (workspace.logoUrl) {
+            try {
+              const logoResponse = await fetch(workspace.logoUrl);
+              const logoBuffer = await logoResponse.arrayBuffer();
+              const logoBase64 = Buffer.from(logoBuffer).toString("base64");
+
+              enhancementContent.push({
+                inlineData: {
+                  mimeType:
+                    logoResponse.headers.get("content-type") || "image/png",
+                  data: logoBase64,
+                },
+              });
+            } catch (logoError) {
+              console.warn("Failed to fetch Promowaves logo:", logoError);
+            }
+          }
+
+          // Add store logo if available
+          if (store.logo) {
+            try {
+              const storeLogoResponse = await fetch(store.logo);
+              const storeLogoBuffer = await storeLogoResponse.arrayBuffer();
+              const storeLogoBase64 =
+                Buffer.from(storeLogoBuffer).toString("base64");
+
+              enhancementContent.push({
+                inlineData: {
+                  mimeType:
+                    storeLogoResponse.headers.get("content-type") ||
+                    "image/png",
+                  data: storeLogoBase64,
+                },
+              });
+            } catch (storeLogoError) {
+              console.warn(
+                `Failed to fetch ${store.name} logo:`,
+                storeLogoError
+              );
+            }
+          }
+
+          // Generate the final banner with logos integrated
+          // const finalResponse = await genAI
+          //   .getGenerativeModel({
+          //     model: "gemini-2.0-flash-exp",
+          //   })
+          //   .generateContent(enhancementContent);
+
+          const finalResponse = await genAI.models.generateContent({
+            model: "gemini-2.0-flash-image-preview", // or another model that supports image output
+            contents: enhancementContent,
+            // config: {
+            //   responseModalities: [Modality.TEXT, Modality.IMAGE],
+            //   candidateCount: 1,
+            // },
+          });
+
+          const duration = (Date.now() - start) / 1000;
+
+          // Extract the final enhanced image
+          let finalImageBase64: string | null = null;
+          const finalCandidates = finalResponse.candidates ?? [];
+          if (finalCandidates.length > 0) {
+            const parts = finalCandidates[0]?.content?.parts ?? [];
+            for (const part of parts) {
+              if (part.inlineData?.data) {
+                finalImageBase64 = part.inlineData.data;
+                break;
+              }
+            }
+          }
+
+          if (!finalImageBase64) {
+            // Fallback to the initial banner if logo integration failed
+            finalImageBase64 = imageBase64;
+          }
+
+          // Upload the final enhanced image
+          const uploadUrl = await uploadGeneratedImageFromBase64(
+            finalImageBase64
+          );
 
           // Log AI generation
           const aiGeneration = await ctx.db.aIGenerationLog.create({
@@ -1570,8 +1745,8 @@ export const postsRouter = createTRPCRouter({
               scheduleId,
               type: "IMAGE",
               prompt: effectivePrompt,
-              model: "gemini-2.5-flash-image-preview",
-              imageSize: "1024x1024",
+              model: "gemini-2.0-flash-exp",
+              imageSize: "1200x630",
               duration,
               status: "COMPLETED",
               cost: 0,
@@ -1628,8 +1803,8 @@ export const postsRouter = createTRPCRouter({
               scheduleId,
               type: "IMAGE",
               prompt: effectivePrompt,
-              model: "gemini-2.5-flash-image-preview",
-              imageSize: "1024x1024",
+              model: "gemini-2.0-flash-exp",
+              imageSize: "1200x630",
               duration: 0,
               status: "FAILED",
               error: error instanceof Error ? error.message : "Unknown error",
