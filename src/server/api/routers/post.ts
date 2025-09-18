@@ -15,12 +15,61 @@ import {
   uploadGeneratedImage,
   uploadGeneratedImageFromBase64,
 } from "@/lib/uploadthing-server";
+import { publishPostInternal } from "../utils/publishPost";
 import { fetchAndSelectStore, type Store } from "@/lib/promoStores";
 import { GoogleGenAI, Modality } from "@google/genai";
 import { env } from "@/env";
 
+type PromptPart =
+  | { text: string }
+  | { inlineData: { mimeType: string; data: string } };
+
+type CommissionRange = {
+  min: number;
+  max: number;
+  type: "percentage" | "fixed";
+};
+
+// Helper function to format commission data for display
+function formatCommissionDisplay(
+  commissions: Array<{ type: string; min: number; max: number }>
+): string | null {
+  if (!commissions || commissions.length === 0) return null;
+  const displays: string[] = [];
+  for (const commission of commissions) {
+    if (commission.type === "percentage") {
+      displays.push(`${commission.max}% Cashback`);
+    } else if (commission.type === "fixed") {
+      displays.push(`€${commission.max} Reward`);
+    }
+  }
+  return displays.join(" + ");
+}
+
+// Helper function to get the best commission highlight
+function getBestCommissionHighlight(
+  commissions: CommissionRange[]
+): string | null {
+  if (!commissions || commissions.length === 0) return null;
+
+  const percentage = commissions.find((c) => c.type === "percentage");
+  const fixed = commissions.find((c) => c.type === "fixed");
+
+  if (percentage && fixed) {
+    return `${percentage.max}% + €${fixed.max}`;
+  } else if (percentage) {
+    return `${percentage.max}% BACK`;
+  } else if (fixed) {
+    return `€${fixed.max} BONUS`;
+  }
+
+  return null;
+}
+
 const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
-const genAI = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
+const genAI = new GoogleGenAI({
+  apiKey: "AIzaSyAgBNcr9B_5ptU8bGhP_GpdN9KS1tBc41U",
+});
 
 const listPostsSchema = z.object({
   workspaceId: z.string(),
@@ -1516,174 +1565,148 @@ export const postsRouter = createTRPCRouter({
         update: { total: totalImages, completed: 0 },
       });
 
-      const workspace = await ctx.db.workspace.findUnique({
-        where: { id: workspaceId },
-        select: { logoUrl: true },
-      });
-      if (!workspace || !workspace.logoUrl) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "Workspace logo not found",
-        });
+      const workspaceUrl =
+        "https://promowaves.net/_next/image?url=%2F_next%2Fstatic%2Fmedia%2Flogo_close_beta.4fedd7a9.png&w=384&q=75";
+
+      // const workspace = await ctx.db.workspace.findUnique({
+      //   where: { id: workspaceId },
+      //   select: { logoUrl: true },
+      // });
+
+      // if (!workspace || !workspace.logoUrl) {
+      //   throw new TRPCError({
+      //     code: "BAD_REQUEST",
+      //     message: "Workspace logo not found",
+      //   });
+      // }
+
+      // Fetch list of stores once (cache per run)
+      let storeList: any[] = [];
+      try {
+        const storesResp = await axios.get(
+          "https://promowaves.net/api/getStores",
+          {
+            timeout: 10000,
+          }
+        );
+        storeList = Array.isArray(storesResp.data) ? storesResp.data : [];
+      } catch (err) {
+        console.warn("Could not fetch store list from Promowaves API:", err);
+        // we continue - individual store lookups will fail gracefully
       }
 
       let completed = 0;
       for (const post of posts) {
-        // Fetch the store details from UsedStore table
-        const usedStore = await ctx.db.usedStore.findFirst({
-          where: { workspaceId, scheduleId, storeName: post.storeName || "" },
-        });
-
-        if (!usedStore) {
-          console.error(`No store found for post ${post.id}`);
-          continue;
-        }
-
-        // Fetch store details from API to get logo
-        const storeResponse = await axios.get(
-          "https://promowaves.net/api/getStores"
-        );
-        const store = storeResponse.data.find(
-          (s: Store) => s.name === post.storeName
-        );
-
-        if (!store) {
-          console.error(`Store not found for ${post.storeName}`);
-          continue;
-        }
-
-        // Enhanced image prompt focusing on affiliate marketing banner design
-        const effectivePrompt =
-          schedule.imagePrompt ||
-          `Create a professional affiliate marketing promotional banner for Promowaves platform.
-          
-          DESIGN SPECIFICATIONS:
-          - Format: Social media promotional banner (1200x630px ideal)
-          - Style: Modern, eye-catching affiliate marketing design
-          - Color scheme: Vibrant, high-converting colors with strong contrast
-          
-          REQUIRED ELEMENTS (in order of prominence):
-          1. Main headline: "EXCLUSIVE DEAL" or "SPECIAL OFFER" in bold, large text
-          2. Store name: "${store.name}" prominently displayed
-          3. Discount/offer text: "UP TO 50% OFF + CASHBACK" or similar compelling offer
-          4. Promowaves branding: "via Promowaves" or "Powered by Promowaves" 
-          5. Call-to-action: "SHOP NOW" or "GET DEAL" button
-          6. Category context: Subtle ${store.category} themed background elements
-          
-          LOGO PLACEMENT INSTRUCTIONS:
-          - Reserve TOP-LEFT corner for Promowaves logo placement
-          - Reserve TOP-RIGHT or BOTTOM-RIGHT corner for ${store.name} store logo placement
-          - Leave clear, defined spaces for both logos (don't overlap with text)
-          - Ensure logo areas have contrasting backgrounds for visibility
-          
-          VISUAL STYLE:
-          - Professional affiliate marketing aesthetic
-          - High contrast text for readability
-          - Gradient or solid backgrounds that make logos pop
-          - Modern typography with hierarchy
-          - Mobile-optimized design
-          - Trust-building elements (verified, secure, etc.)
-          
-          IMPORTANT: Do NOT generate actual logos - leave designated spaces for real logo placement. Focus on creating an engaging banner design that will showcase both the Promowaves and ${store.name} logos effectively when they are added as separate elements.`;
-
         try {
-          const start = Date.now();
-
-          // Create the banner first with text-only prompt
-          const contentResponse = await genAI.models.generateContent({
-            model: "gemini-2.0-flash-image-preview", // or another model that supports image output
-            contents:
-              effectivePrompt +
-              `\n\nContent context: "${post.content}"\nStore description: ${
-                store.description ?? "Quality products and services"
-              }`,
-            //config: {
-            //   responseModalities: [Modality.TEXT, Modality.IMAGE],
-            //   candidateCount: 1,
-            // },
+          // Fetch the store details from UsedStore table
+          const usedStore = await ctx.db.usedStore.findFirst({
+            where: { workspaceId, scheduleId, storeName: post.storeName || "" },
           });
 
-          let imageBase64: string | null = null;
-
-          // Extract the generated banner
-          const candidates = contentResponse.candidates ?? [];
-          if (candidates.length > 0) {
-            const parts = candidates[0]?.content?.parts ?? [];
-            for (const part of parts) {
-              if (part.inlineData?.data) {
-                imageBase64 = part.inlineData.data;
-                break;
-              }
-            }
+          if (!usedStore) {
+            console.error(`No store found for post ${post.id}`);
+            continue;
           }
 
-          if (!imageBase64) {
-            throw new Error("No banner image generated in response");
+          // Find store in Promowaves API response using name OR displayUrl fallback
+          const store =
+            storeList.find(
+              (s: any) =>
+                (s.name &&
+                  s.name.toLowerCase() ===
+                    (post.storeName || "").toLowerCase()) ||
+                (s.displayUrl && s.displayUrl === post.storeName)
+            ) || null;
+
+          if (!store) {
+            console.error(`Store not found for ${post.storeName}`);
+            continue;
           }
 
-          // Now enhance the banner by adding the actual logos
-          const logoEnhancementPrompt = `
-            Take this promotional banner and enhance it by adding these specific elements:
-            
-            LOGO ADDITIONS REQUIRED:
-            1. Add the Promowaves logo in the designated top-left area
-            2. Add the ${store.name} store logo in the designated top-right or bottom-right area
-            3. Ensure both logos are clearly visible and professionally integrated
-            4. Maintain the banner's existing design while making logos prominent
-            5. Ensure logos complement the color scheme and don't clash
-            
-            INTEGRATION GUIDELINES:
-            - Logos should look naturally integrated, not just pasted on
-            - Add subtle shadows or effects to make logos blend well
-            - Ensure both logos are readable and high-quality
-            - Maintain the professional affiliate marketing aesthetic
-            - Keep the focus on the partnership between Promowaves and ${store.name}
-            
-            The result should be a cohesive affiliate marketing banner that clearly shows the partnership between Promowaves (affiliate platform) and ${store.name} (featured store).
-          `;
+          // Commission highlight text
+          const commissionHighlight = getBestCommissionHighlight(
+            store.commissionRanges || []
+          );
+          const commissionText = commissionHighlight
+            ? `• "${commissionHighlight}" in bold, eye-catching style`
+            : "";
 
-          const enhancementContent = [
-            { text: logoEnhancementPrompt },
-            {
-              inlineData: {
-                mimeType: "image/png",
-                data: imageBase64,
-              },
-            },
-          ];
+          // Construct the image prompt (keep minimal). Also add a short directive to use displayUrl as a small watermark/footer.
+          const effectivePrompt =
+            schedule.imagePrompt ||
+            `Create a CLEAN, MINIMAL promotional banner with VERY LIMITED TEXT.
 
-          // Add Promowaves logo if available
-          if (workspace.logoUrl) {
+            STRICT Design Rules:
+            - MAXIMUM 3-4 text elements only
+            - NO paragraphs, NO descriptions, NO body text
+            - Focus on visual impact, not text content
+
+            Essential Elements (text minimal):
+            1. Store name: "${store.name}" (prominent)
+            2. Commission offer: "${
+              commissionHighlight || "SPECIAL OFFER"
+            }" (very bold)
+            3. Call-to-action: "SHOP NOW" or similar (1-2 words max)
+
+            Visual Requirements:
+            - Logos: Include Promowaves and ${
+              store.name
+            } logos (use Promowaves logo as a brand mark)
+            - Add store website/displayUrl as a small watermark/footer: "${
+              store.displayUrl || ""
+            }" (tiny, bottom-right)
+            - Style: Clean, modern, high-impact design
+            - Colors: Bold, contrasting, attention-grabbing
+            - Category: ${
+              store.category || "general"
+            } theme (visual elements, not text)
+            - Layout: Spacious, uncluttered, professional
+            - Background: Simple gradient or pattern
+
+            Format: Social media banner, mobile-optimized`;
+
+          // Build prompt parts (text + inline logos). We intentionally push the main text prompt first,
+          // then inline promowaves logo, then store logo, then a small text part for the displayUrl watermark.
+          const promptContent: any[] = [{ text: effectivePrompt }];
+
+          // Add Promowaves (workspace) logo as inline image
+          if (workspaceUrl) {
             try {
-              const logoResponse = await fetch(workspace.logoUrl);
-              const logoBuffer = await logoResponse.arrayBuffer();
-              const logoBase64 = Buffer.from(logoBuffer).toString("base64");
-
-              enhancementContent.push({
+              const logoResp = await fetch(workspaceUrl);
+              const logoArrayBuffer = await logoResp.arrayBuffer();
+              const logoBase64 =
+                Buffer.from(logoArrayBuffer).toString("base64");
+              promptContent.push({
                 inlineData: {
                   mimeType:
-                    logoResponse.headers.get("content-type") || "image/png",
+                    // @ts-ignore headers may be present
+                    (logoResp.headers && logoResp.headers.get
+                      ? logoResp.headers.get("content-type")
+                      : undefined) || "image/png",
                   data: logoBase64,
                 },
               });
             } catch (logoError) {
-              console.warn("Failed to fetch Promowaves logo:", logoError);
+              console.warn(
+                "Failed to fetch Promowaves workspace logo:",
+                logoError
+              );
             }
           }
 
-          // Add store logo if available
+          // Add store logo as inline image (if present)
           if (store.logo) {
             try {
-              const storeLogoResponse = await fetch(store.logo);
-              const storeLogoBuffer = await storeLogoResponse.arrayBuffer();
+              const storeLogoResp = await fetch(store.logo);
+              const storeLogoBuffer = await storeLogoResp.arrayBuffer();
               const storeLogoBase64 =
                 Buffer.from(storeLogoBuffer).toString("base64");
-
-              enhancementContent.push({
+              promptContent.push({
                 inlineData: {
                   mimeType:
-                    storeLogoResponse.headers.get("content-type") ||
-                    "image/png",
+                    (storeLogoResp.headers && storeLogoResp.headers.get
+                      ? storeLogoResp.headers.get("content-type")
+                      : undefined) || "image/png",
                   data: storeLogoBase64,
                 },
               });
@@ -1695,46 +1718,45 @@ export const postsRouter = createTRPCRouter({
             }
           }
 
-          // Generate the final banner with logos integrated
-          // const finalResponse = await genAI
-          //   .getGenerativeModel({
-          //     model: "gemini-2.0-flash-exp",
-          //   })
-          //   .generateContent(enhancementContent);
+          // Small explicit text instruction to use store.displayUrl as watermark/footer (helps the model place it)
+          if (store.displayUrl) {
+            promptContent.push({
+              text: `Small watermark/footer: ${store.displayUrl} (tiny, bottom-right)`,
+            });
+          }
 
-          const finalResponse = await genAI.models.generateContent({
-            model: "gemini-2.0-flash-image-preview", // or another model that supports image output
-            contents: enhancementContent,
-            // config: {
-            //   responseModalities: [Modality.TEXT, Modality.IMAGE],
-            //   candidateCount: 1,
-            // },
+          // Also pass the commission text as a short explicit instruction if available
+          if (commissionText) {
+            promptContent.push({ text: commissionText });
+          }
+
+          // Call the image model
+          const start = Date.now();
+          const genResponse = await genAI.models.generateContent({
+            model: "gemini-2.5-flash-image-preview",
+            contents: promptContent,
           });
 
           const duration = (Date.now() - start) / 1000;
 
-          // Extract the final enhanced image
-          let finalImageBase64: string | null = null;
-          const finalCandidates = finalResponse.candidates ?? [];
-          if (finalCandidates.length > 0) {
-            const parts = finalCandidates[0]?.content?.parts ?? [];
-            for (const part of parts) {
+          // Extract base64 image
+          let imageBase64: string | null = null;
+          if (genResponse.candidates?.length) {
+            for (const part of genResponse.candidates[0]?.content?.parts ||
+              []) {
               if (part.inlineData?.data) {
-                finalImageBase64 = part.inlineData.data;
+                imageBase64 = part.inlineData.data;
                 break;
               }
             }
           }
 
-          if (!finalImageBase64) {
-            // Fallback to the initial banner if logo integration failed
-            finalImageBase64 = imageBase64;
+          if (!imageBase64) {
+            throw new Error("No image generated in response");
           }
 
-          // Upload the final enhanced image
-          const uploadUrl = await uploadGeneratedImageFromBase64(
-            finalImageBase64
-          );
+          // Upload the generated image (assumes helper exists in your codebase)
+          const uploadUrl = await uploadGeneratedImageFromBase64(imageBase64);
 
           // Log AI generation
           const aiGeneration = await ctx.db.aIGenerationLog.create({
@@ -1745,7 +1767,7 @@ export const postsRouter = createTRPCRouter({
               scheduleId,
               type: "IMAGE",
               prompt: effectivePrompt,
-              model: "gemini-2.0-flash-exp",
+              model: "gemini-2.5-flash-image-preview",
               imageSize: "1200x630",
               duration,
               status: "COMPLETED",
@@ -1753,6 +1775,7 @@ export const postsRouter = createTRPCRouter({
             },
           });
 
+          // Attach / update post image entry
           let postImage;
           if (post.images.length > 0 && post.images[0]?.id) {
             postImage = await ctx.db.postImage.update({
@@ -1791,6 +1814,12 @@ export const postsRouter = createTRPCRouter({
             where: { scheduleId },
             data: { completed },
           });
+
+          console.log(
+            `✅ Generated image for "${store.name}" (${
+              store.displayUrl || "no displayUrl"
+            }) — ${duration}s — commission: ${commissionHighlight || "none"}`
+          );
         } catch (error) {
           console.error(`Failed to generate image for post ${post.id}:`, error);
 
@@ -1802,8 +1831,8 @@ export const postsRouter = createTRPCRouter({
               postId: post.id,
               scheduleId,
               type: "IMAGE",
-              prompt: effectivePrompt,
-              model: "gemini-2.0-flash-exp",
+              prompt: schedule.imagePrompt || "Default prompt",
+              model: "gemini-2.5-flash-image-preview",
               imageSize: "1200x630",
               duration: 0,
               status: "FAILED",
@@ -1813,7 +1842,7 @@ export const postsRouter = createTRPCRouter({
           });
           continue;
         }
-      }
+      } // end for posts
 
       return { success: true, imagesGenerated: completed };
     }),
