@@ -101,13 +101,13 @@ export function Navbar() {
             <span className="text-xl font-bold bg-gradient-to-r from-slate-900 to-slate-600 dark:from-slate-100 dark:to-slate-400 bg-clip-text text-transparent">
               Social Manager
             </span>
-            <Badge
+            {/* <Badge
               variant="secondary"
               className="hidden sm:flex bg-gradient-to-r from-blue-100 to-purple-100 dark:from-blue-900 dark:to-purple-900 text-blue-700 dark:text-blue-300 border-0"
             >
               <Sparkles className="w-3 h-3 mr-1" />
               AI
-            </Badge>
+            </Badge> */}
           </motion.div>
 
           {session && (

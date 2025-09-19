@@ -656,6 +656,112 @@ export const postsRouter = createTRPCRouter({
       return { success: true, post: updatedPost };
     }),
 
+  updateContentWithPrompt: protectedProcedure
+    .input(
+      z.object({
+        postId: z.string(),
+        workspaceId: z.string(),
+        instruction: z.string().min(1),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { postId, workspaceId, instruction } = input;
+
+      const post = await ctx.db.post.findUnique({
+        where: { id: postId },
+      });
+
+      if (!post) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Post not found",
+        });
+      }
+
+      // Permission checks (same as update)
+      const member = await ctx.db.workspaceMember.findFirst({
+        where: { workspaceId, userId: ctx.session.user.id },
+        include: {
+          role: {
+            include: {
+              permissions: { include: { permission: true } },
+            },
+          },
+        },
+      });
+
+      if (!member) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Not a member of this workspace",
+        });
+      }
+
+      const hasPermission =
+        member.role.name === "owner" ||
+        member.role.permissions.some(
+          (rp) =>
+            rp.permission.resource === "posts" &&
+            rp.permission.action === "update"
+        );
+
+      if (!hasPermission) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You don't have permission to update posts",
+        });
+      }
+
+      if (post.status === PostStatus.APPROVED) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Cannot update approved posts",
+        });
+      }
+
+      // === Call OpenAI ===
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `
+              You are an assistant that ONLY rewrites text.
+              Rules:
+              - Take the provided "current content" and the "instruction".
+              - Return ONLY the updated content, nothing else.
+              - Do not add explanations, hashtags, or JSON.
+            `,
+          },
+          {
+            role: "user",
+            content: `
+              Current content:
+              ${post.content}
+  
+              Instruction: ${instruction}
+            `,
+          },
+        ],
+        temperature: 0.7,
+        max_tokens: 1000,
+      });
+
+      const updatedContent =
+        response.choices[0]?.message?.content?.trim() || post.content;
+
+      // Save back
+      const updatedPost = await ctx.db.post.update({
+        where: { id: postId },
+        data: {
+          content: updatedContent,
+          status: PostStatus.DRAFT,
+        },
+      });
+
+      return { success: true, post: updatedPost };
+    }),
+
   generateBulkPosts: protectedProcedure
     .input(
       z.object({
