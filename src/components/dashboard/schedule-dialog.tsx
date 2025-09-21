@@ -108,7 +108,7 @@ export function ScheduleCreationDialog({
       setProgress(100); // Done
       toast.success("Schedule and posts created successfully!");
       await utils.schedules.list.invalidate({ workspaceId });
-      router.push(`/workspace/${workspaceId}/schedule/${data.id}`);
+      router.push(`/workspace/${workspaceId}/schedule/${data.id}/edit`);
       onOpenChange(false);
       setNewSchedule({
         name: "",
