@@ -19,6 +19,8 @@ import { publishPostInternal } from "../utils/publishPost";
 import { fetchAndSelectStore, type Store } from "@/lib/promoStores";
 import { GoogleGenAI, Modality } from "@google/genai";
 import { env } from "@/env";
+import { buildEnhancedPrompt, buildPromptContent } from "../utils/gemniImageGeneration";
+import { SAMEER_PROMOWAVES_NEON_ID } from "@/lib/constants";
 
 type PromptPart =
   | { text: string }
@@ -68,7 +70,7 @@ function getBestCommissionHighlight(
 
 const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
 const genAI = new GoogleGenAI({
-  apiKey: "AIzaSyAgBNcr9B_5ptU8bGhP_GpdN9KS1tBc41U",
+  apiKey: env.GEMINI_API_KEY,
 });
 
 const listPostsSchema = z.object({
@@ -431,8 +433,7 @@ export const postsRouter = createTRPCRouter({
       if (
         input.storeName &&
         input.storeUrl &&
-        // input.workspaceId === "cmfcejqiw003go25g2vwaqiia" // PostWaves Promowaves ID
-        input.workspaceId === "cmfhdr7ba003gnv37cmewal29" // Promowaves ID in Neon DB
+        input.workspaceId === SAMEER_PROMOWAVES_NEON_ID // Promowaves ID in Neon DB
       ) {
         await ctx.db.usedStore.create({
           data: {
@@ -636,19 +637,19 @@ export const postsRouter = createTRPCRouter({
           status: PostStatus.DRAFT,
           images: imageUrl
             ? {
-                upsert: {
-                  where: { id: post.images[0]?.id || "dummy-id" },
-                  create: {
-                    url: imageUrl,
-                    order: 0,
-                    isApproved: false,
-                  },
-                  update: {
-                    url: imageUrl,
-                    isApproved: false,
-                  },
+              upsert: {
+                where: { id: post.images[0]?.id || "dummy-id" },
+                create: {
+                  url: imageUrl,
+                  order: 0,
+                  isApproved: false,
                 },
-              }
+                update: {
+                  url: imageUrl,
+                  isApproved: false,
+                },
+              },
+            }
             : undefined,
         },
       });
@@ -925,8 +926,8 @@ export const postsRouter = createTRPCRouter({
                     - content: the text of the post (max 280 chars if Twitter is included, 2200 for Instagram, 3000 for LinkedIn, 63206 for Facebook).
                     - hashtags: 3-5 hashtags, array of strings, no duplicates from the provided list.
                     Ensure content is unique, engaging, and tailored to the platforms: ${schedule.platforms.join(
-                      ", "
-                    )}.
+                    ", "
+                  )}.
                   `,
                 },
                 {
@@ -936,8 +937,8 @@ export const postsRouter = createTRPCRouter({
                     Post index: ${postIndex} of ${totalPosts}
                     Platforms: ${schedule.platforms.join(", ")}
                     Avoid reusing these hashtags: ${Array.from(
-                      usedHashtags
-                    ).join(", ")}
+                    usedHashtags
+                  ).join(", ")}
                     Scheduled date: ${format(scheduledAt, "PPP")}
                   `,
                 },
@@ -1449,8 +1450,7 @@ export const postsRouter = createTRPCRouter({
                     STORE CONTEXT:
                     - Store: ${store.name}
                     - Category: ${store.category}
-                    - Description: ${
-                      store.description || "Premium quality products"
+                    - Description: ${store.description || "Premium quality products"
                     }
                     - URL: ${store.displayUrl}
                   `,
@@ -1468,8 +1468,8 @@ export const postsRouter = createTRPCRouter({
                     - Must emphasize Promowaves as the affiliate platform
                     - Show both store benefits AND Promowaves advantages
                     - Avoid these hashtags: ${Array.from(usedHashtags).join(
-                      ", "
-                    )}
+                    ", "
+                  )}
                     - Include store name: ${store.name}
                     - Make it feel like an exclusive deal through Promowaves
                     
@@ -1589,9 +1589,14 @@ export const postsRouter = createTRPCRouter({
     }),
 
   generateImagesForAllPostsOfPromowaves: protectedProcedure
-    .input(z.object({ scheduleId: z.string(), workspaceId: z.string() }))
+    .input(z.object({
+      scheduleId: z.string(),
+      workspaceId: z.string(),
+      imageSize: z.enum(['1024x1024', '1792x1024', '1024x1792']).default('1024x1024').optional(),
+      batchSize: z.number().min(1).max(10).default(5).optional()
+    }))
     .mutation(async ({ ctx, input }) => {
-      const { scheduleId, workspaceId } = input;
+      const { scheduleId, workspaceId, imageSize = '1024x1024', batchSize = 5 } = input;
 
       // Authorization checks (unchanged)
       if (!ctx.session.user.id) {
@@ -1600,6 +1605,7 @@ export const postsRouter = createTRPCRouter({
           message: "User session not found",
         });
       }
+
       const member = await ctx.db.workspaceMember.findFirst({
         where: {
           workspaceId,
@@ -1615,12 +1621,14 @@ export const postsRouter = createTRPCRouter({
           },
         },
       });
+
       if (!member) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "Not a member of this workspace",
         });
       }
+
       const hasPermission =
         member.role.name === "owner" ||
         member.role.permissions.some(
@@ -1628,6 +1636,7 @@ export const postsRouter = createTRPCRouter({
             rp.permission.resource === "posts" &&
             rp.permission.action === "update"
         );
+
       if (!hasPermission) {
         throw new TRPCError({
           code: "FORBIDDEN",
@@ -1639,12 +1648,14 @@ export const postsRouter = createTRPCRouter({
         where: { id: scheduleId },
         include: { posts: { include: { images: true } } },
       });
+
       if (!schedule || schedule.workspaceId !== workspaceId) {
         throw new TRPCError({
           code: "NOT_FOUND",
           message: "Schedule not found",
         });
       }
+
       if (schedule.isActive) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -1655,11 +1666,11 @@ export const postsRouter = createTRPCRouter({
       const posts = schedule.posts.filter(
         (post) => post.status === PostStatus.CONTENT_APPROVED
       );
+
       if (posts.length === 0) {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message:
-            "No posts with approved content available for image generation",
+          message: "No posts with approved content available for image generation",
         });
       }
 
@@ -1674,18 +1685,6 @@ export const postsRouter = createTRPCRouter({
       const workspaceUrl =
         "https://promowaves.net/_next/image?url=%2F_next%2Fstatic%2Fmedia%2Flogo_close_beta.4fedd7a9.png&w=384&q=75";
 
-      // const workspace = await ctx.db.workspace.findUnique({
-      //   where: { id: workspaceId },
-      //   select: { logoUrl: true },
-      // });
-
-      // if (!workspace || !workspace.logoUrl) {
-      //   throw new TRPCError({
-      //     code: "BAD_REQUEST",
-      //     message: "Workspace logo not found",
-      //   });
-      // }
-
       // Fetch list of stores once (cache per run)
       let storeList: any[] = [];
       try {
@@ -1698,259 +1697,260 @@ export const postsRouter = createTRPCRouter({
         storeList = Array.isArray(storesResp.data) ? storesResp.data : [];
       } catch (err) {
         console.warn("Could not fetch store list from Promowaves API:", err);
-        // we continue - individual store lookups will fail gracefully
       }
 
-      let completed = 0;
-      for (const post of posts) {
-        try {
-          // Fetch the store details from UsedStore table
-          const usedStore = await ctx.db.usedStore.findFirst({
-            where: { workspaceId, scheduleId, storeName: post.storeName || "" },
-          });
-
-          if (!usedStore) {
-            console.error(`No store found for post ${post.id}`);
-            continue;
-          }
-
-          // Find store in Promowaves API response using name OR displayUrl fallback
-          const store =
-            storeList.find(
-              (s: any) =>
-                (s.name &&
-                  s.name.toLowerCase() ===
-                    (post.storeName || "").toLowerCase()) ||
-                (s.displayUrl && s.displayUrl === post.storeName)
-            ) || null;
-
-          if (!store) {
-            console.error(`Store not found for ${post.storeName}`);
-            continue;
-          }
-
-          // Commission highlight text
-          const commissionHighlight = getBestCommissionHighlight(
-            store.commissionRanges || []
-          );
-          const commissionText = commissionHighlight
-            ? `• "${commissionHighlight}" in bold, eye-catching style`
-            : "";
-
-          // Construct the image prompt (keep minimal). Also add a short directive to use displayUrl as a small watermark/footer.
-          const effectivePrompt =
-            schedule.imagePrompt ||
-            `Create a CLEAN, MINIMAL promotional banner with VERY LIMITED TEXT.
-
-            STRICT Design Rules:
-            - MAXIMUM 3-4 text elements only
-            - NO paragraphs, NO descriptions, NO body text
-            - Focus on visual impact, not text content
-
-            Essential Elements (text minimal):
-            1. Store name: "${store.name}" (prominent)
-            2. Commission offer: "${
-              commissionHighlight || "SPECIAL OFFER"
-            }" (very bold)
-            3. Call-to-action: "SHOP NOW" or similar (1-2 words max)
-
-            Visual Requirements:
-            - Logos: Include Promowaves and ${
-              store.name
-            } logos (use Promowaves logo as a brand mark)
-            - Add store website/displayUrl as a small watermark/footer: "${
-              store.displayUrl || ""
-            }" (tiny, bottom-right)
-            - Style: Clean, modern, high-impact design
-            - Colors: Bold, contrasting, attention-grabbing
-            - Category: ${
-              store.category || "general"
-            } theme (visual elements, not text)
-            - Layout: Spacious, uncluttered, professional
-            - Background: Simple gradient or pattern
-
-            Format: Social media banner, mobile-optimized`;
-
-          // Build prompt parts (text + inline logos). We intentionally push the main text prompt first,
-          // then inline promowaves logo, then store logo, then a small text part for the displayUrl watermark.
-          const promptContent: any[] = [{ text: effectivePrompt }];
-
-          // Add Promowaves (workspace) logo as inline image
-          if (workspaceUrl) {
+      // Helper function to process images in batches
+      const processBatch = async (batch: typeof posts) => {
+        return Promise.allSettled(
+          batch.map(async (post) => {
             try {
-              const logoResp = await fetch(workspaceUrl);
-              const logoArrayBuffer = await logoResp.arrayBuffer();
-              const logoBase64 =
-                Buffer.from(logoArrayBuffer).toString("base64");
-              promptContent.push({
-                inlineData: {
-                  mimeType:
-                    // @ts-ignore headers may be present
-                    (logoResp.headers && logoResp.headers.get
-                      ? logoResp.headers.get("content-type")
-                      : undefined) || "image/png",
-                  data: logoBase64,
+              // Fetch the store details from UsedStore table
+              const usedStore = await ctx.db.usedStore.findFirst({
+                where: {
+                  workspaceId,
+                  scheduleId,
+                  storeName: post.storeName || ""
                 },
               });
-            } catch (logoError) {
-              console.warn(
-                "Failed to fetch Promowaves workspace logo:",
-                logoError
-              );
-            }
-          }
 
-          // Add store logo as inline image (if present)
-          if (store.logo) {
-            try {
-              const storeLogoResp = await fetch(store.logo);
-              const storeLogoBuffer = await storeLogoResp.arrayBuffer();
-              const storeLogoBase64 =
-                Buffer.from(storeLogoBuffer).toString("base64");
-              promptContent.push({
-                inlineData: {
-                  mimeType:
-                    (storeLogoResp.headers && storeLogoResp.headers.get
-                      ? storeLogoResp.headers.get("content-type")
-                      : undefined) || "image/png",
-                  data: storeLogoBase64,
-                },
-              });
-            } catch (storeLogoError) {
-              console.warn(
-                `Failed to fetch ${store.name} logo:`,
-                storeLogoError
-              );
-            }
-          }
-
-          // Small explicit text instruction to use store.displayUrl as watermark/footer (helps the model place it)
-          if (store.displayUrl) {
-            promptContent.push({
-              text: `Small watermark/footer: ${store.displayUrl} (tiny, bottom-right)`,
-            });
-          }
-
-          // Also pass the commission text as a short explicit instruction if available
-          if (commissionText) {
-            promptContent.push({ text: commissionText });
-          }
-
-          // Call the image model
-          const start = Date.now();
-          const genResponse = await genAI.models.generateContent({
-            model: "gemini-2.5-flash-image-preview",
-            contents: promptContent,
-          });
-
-          const duration = (Date.now() - start) / 1000;
-
-          // Extract base64 image
-          let imageBase64: string | null = null;
-          if (genResponse.candidates?.length) {
-            for (const part of genResponse.candidates[0]?.content?.parts ||
-              []) {
-              if (part.inlineData?.data) {
-                imageBase64 = part.inlineData.data;
-                break;
+              if (!usedStore) {
+                console.error(`No store found for post ${post.id}`);
+                return { success: false, postId: post.id };
               }
+
+              // Find store in Promowaves API response
+              const store = storeList.find(
+                (s: any) =>
+                  (s.name && s.name.toLowerCase() === (post.storeName || "").toLowerCase()) ||
+                  (s.displayUrl && s.displayUrl === post.storeName)
+              ) || null;
+
+              if (!store) {
+                console.error(`Store not found for ${post.storeName}`);
+                return { success: false, postId: post.id };
+              }
+
+              // Commission highlight text
+              const commissionHighlight = getBestCommissionHighlight(
+                store.commissionRanges || []
+              );
+
+              // Enhanced prompt for 1024x1024 square format
+              const effectivePrompt = schedule.imagePrompt || buildEnhancedPrompt({
+                storeName: store.name,
+                commission: commissionHighlight,
+                category: store.category,
+                displayUrl: store.displayUrl,
+                imageSize
+              });
+
+              // Build prompt content with proper image data
+              const promptContent = await buildPromptContent({
+                prompt: effectivePrompt,
+                workspaceUrl,
+                storeLogo: store.logo,
+                storeDisplayUrl: store.displayUrl,
+                commission: commissionHighlight
+              });
+
+              // Configure model parameters for better quality
+              const modelConfig = {
+                model: "gemini-2.5-flash-image-preview",
+                generationConfig: {
+                  responseMimeType: "image/png",
+                  responseSchema: {
+                    type: "object",
+                    properties: {
+                      image: { type: "string", format: "base64" }
+                    }
+                  }
+                },
+                safetySettings: [
+                  {
+                    category: "HARM_CATEGORY_HARASSMENT",
+                    threshold: "BLOCK_ONLY_HIGH"
+                  },
+                  {
+                    category: "HARM_CATEGORY_HATE_SPEECH",
+                    threshold: "BLOCK_ONLY_HIGH"
+                  }
+                ]
+              };
+
+              // Generate with retry logic
+              let imageBase64: string | null = null;
+              let attempts = 0;
+              const maxAttempts = 3;
+
+              while (attempts < maxAttempts && !imageBase64) {
+                attempts++;
+
+                try {
+                  const start = Date.now();
+
+                  // Add specific image size instruction to the prompt
+                  const sizeInstructedContent = [...promptContent];
+                  sizeInstructedContent[0] = {
+                    text: `${promptContent[0].text}\n\nIMAGE SPECIFICATIONS:\n- Generate a ${imageSize} image (square format)\n- High resolution, sharp details\n- Optimized for social media display`
+                  };
+
+                  const genResponse = await genAI.models.generateContent({
+                    ...modelConfig,
+                    contents: sizeInstructedContent,
+                  });
+
+                  const duration = (Date.now() - start) / 1000;
+
+                  // Extract base64 image
+                  if (genResponse.candidates?.length) {
+                    for (const part of genResponse.candidates[0]?.content?.parts || []) {
+                      if (part.inlineData?.data) {
+                        imageBase64 = part.inlineData.data;
+                        break;
+                      }
+                    }
+                  }
+
+                } catch (genError) {
+                  console.error(`Attempt ${attempts} failed:`, genError);
+                  if (attempts === maxAttempts) throw genError;
+                  await new Promise(resolve => setTimeout(resolve, 1000 * attempts)); // Exponential backoff
+                }
+              }
+
+              if (!imageBase64) {
+                throw new Error("Failed to generate image after multiple attempts");
+              }
+
+              // Upload the generated image
+              const uploadUrl = await uploadGeneratedImageFromBase64(imageBase64);
+
+              // Log AI generation
+              const aiGeneration = await ctx.db.aIGenerationLog.create({
+                data: {
+                  userId: ctx.session.user.id!,
+                  workspaceId,
+                  postId: post.id,
+                  scheduleId,
+                  type: "IMAGE",
+                  prompt: effectivePrompt,
+                  model: modelConfig.model,
+                  imageSize,
+                  duration: 0,
+                  status: "COMPLETED",
+                  cost: 0.02, // Implement cost calculation
+                },
+              });
+
+              // Update or create post image
+              let postImage;
+              if (post.images.length > 0 && post.images[0]?.id) {
+                postImage = await ctx.db.postImage.update({
+                  where: { id: post.images[0].id },
+                  data: {
+                    url: uploadUrl,
+                    aiPrompt: effectivePrompt,
+                    isApproved: false,
+                    aiGenerationId: aiGeneration.id,
+                    width: 1024,
+                    height: 1024,
+                  },
+                });
+              } else {
+                postImage = await ctx.db.postImage.create({
+                  data: {
+                    postId: post.id,
+                    url: uploadUrl,
+                    aiPrompt: effectivePrompt,
+                    isApproved: false,
+                    order: 0,
+                    aiGenerationId: aiGeneration.id,
+                    width: 1024,
+                    height: 1024,
+                  },
+                });
+              }
+              const currentLog = await ctx.db.aIGenerationLog.findUnique({
+                where: { id: aiGeneration.id },
+                select: { imageId: true }
+              });
+              // Update AI generation log
+              if (!currentLog?.imageId) {
+                await ctx.db.aIGenerationLog.update({
+                  where: { id: aiGeneration.id },
+                  data: {
+                    imageId: postImage.id,
+                    status: "COMPLETED",
+                  },
+                });
+              }
+
+              return { success: true, postId: post.id };
+
+            } catch (error) {
+              console.error(`Failed to generate image for post ${post.id}:`, error);
+
+              // Log failed generation
+              await ctx.db.aIGenerationLog.create({
+                data: {
+                  userId: ctx.session.user.id!,
+                  workspaceId,
+                  postId: post.id,
+                  scheduleId,
+                  type: "IMAGE",
+                  prompt: schedule.imagePrompt || "Default prompt",
+                  model: "gemini-2.0-flash-exp",
+                  imageSize,
+                  duration: 0,
+                  status: "FAILED",
+                  error: error instanceof Error ? error.message : "Unknown error",
+                  cost: 0,
+                },
+              });
+
+              return { success: false, postId: post.id, error };
             }
-          }
+          })
+        );
+      };
 
-          if (!imageBase64) {
-            throw new Error("No image generated in response");
-          }
+      // Process posts in batches for better performance
+      let completed = 0;
+      const results = [];
 
-          // Upload the generated image (assumes helper exists in your codebase)
-          const uploadUrl = await uploadGeneratedImageFromBase64(imageBase64);
+      for (let i = 0; i < posts.length; i += batchSize) {
+        const batch = posts.slice(i, i + batchSize);
+        const batchResults = await processBatch(batch);
 
-          // Log AI generation
-          const aiGeneration = await ctx.db.aIGenerationLog.create({
-            data: {
-              userId: ctx.session.user.id,
-              workspaceId,
-              postId: post.id,
-              scheduleId,
-              type: "IMAGE",
-              prompt: effectivePrompt,
-              model: "gemini-2.5-flash-image-preview",
-              imageSize: "1200x630",
-              duration,
-              status: "COMPLETED",
-              cost: 0,
-            },
-          });
+        // Update progress
+        const successCount = batchResults.filter(
+          r => r.status === 'fulfilled' && r.value.success
+        ).length;
 
-          // Attach / update post image entry
-          let postImage;
-          if (post.images.length > 0 && post.images[0]?.id) {
-            postImage = await ctx.db.postImage.update({
-              where: { id: post.images[0].id },
-              data: {
-                url: uploadUrl,
-                aiPrompt: effectivePrompt,
-                isApproved: false,
-                aiGenerationId: aiGeneration.id,
-              },
-            });
-          } else {
-            postImage = await ctx.db.postImage.create({
-              data: {
-                postId: post.id,
-                url: uploadUrl,
-                aiPrompt: effectivePrompt,
-                isApproved: false,
-                order: 0,
-                aiGenerationId: aiGeneration.id,
-              },
-            });
-          }
+        completed += successCount;
 
-          // Update the AI generation log with the imageId
-          await ctx.db.aIGenerationLog.update({
-            where: { id: aiGeneration.id },
-            data: {
-              imageId: postImage.id,
-              status: "COMPLETED",
-            },
-          });
+        await ctx.db.postGenerationProgress.update({
+          where: { scheduleId },
+          data: { completed },
+        });
 
-          completed++;
-          await ctx.db.postGenerationProgress.update({
-            where: { scheduleId },
-            data: { completed },
-          });
+        results.push(...batchResults);
 
-          console.log(
-            `✅ Generated image for "${store.name}" (${
-              store.displayUrl || "no displayUrl"
-            }) — ${duration}s — commission: ${commissionHighlight || "none"}`
-          );
-        } catch (error) {
-          console.error(`Failed to generate image for post ${post.id}:`, error);
-
-          // Log failed generation
-          await ctx.db.aIGenerationLog.create({
-            data: {
-              userId: ctx.session.user.id,
-              workspaceId,
-              postId: post.id,
-              scheduleId,
-              type: "IMAGE",
-              prompt: schedule.imagePrompt || "Default prompt",
-              model: "gemini-2.5-flash-image-preview",
-              imageSize: "1200x630",
-              duration: 0,
-              status: "FAILED",
-              error: error instanceof Error ? error.message : "Unknown error",
-              cost: 0,
-            },
-          });
-          continue;
+        // Add delay between batches to avoid rate limiting
+        if (i + batchSize < posts.length) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
         }
-      } // end for posts
+      }
 
-      return { success: true, imagesGenerated: completed };
+      return {
+        success: true,
+        imagesGenerated: completed,
+        totalPosts: posts.length,
+        failedPosts: posts.length - completed,
+        results: results.map(r =>
+          r.status === 'fulfilled' ? r.value : { success: false, error: r.reason }
+        )
+      };
     }),
   getGenerationProgress: protectedProcedure
     .input(z.object({ scheduleId: z.string() }))
