@@ -654,9 +654,9 @@ export default function ScheduleEditorPage() {
                             <TableHead className="w-48 py-4 font-semibold text-slate-900 dark:text-slate-100">
                               Store Name
                             </TableHead>
-                            <TableHead className="w-48 py-4 font-semibold text-slate-900 dark:text-slate-100">
+                            {/* <TableHead className="w-48 py-4 font-semibold text-slate-900 dark:text-slate-100">
                               Store URL
-                            </TableHead>
+                            </TableHead> */}
                           </>
                         )}
                         <TableHead className="w-48 py-4 font-semibold text-slate-900 dark:text-slate-100">
@@ -702,7 +702,7 @@ export default function ScheduleEditorPage() {
                               <TableCell className="py-6 align-top text-sm">
                                 {post.storeName || "N/A"}
                               </TableCell>
-                              <TableCell className="py-6 align-top text-sm">
+                              {/* <TableCell className="py-6 align-top text-sm">
                                 {post.storeUrl ? (
                                   <a
                                     href={post.storeUrl}
@@ -715,7 +715,7 @@ export default function ScheduleEditorPage() {
                                 ) : (
                                   "N/A"
                                 )}
-                              </TableCell>
+                              </TableCell> */}
                             </>
                           )}
                           <TableCell className="py-6 align-top text-sm whitespace-normal">
