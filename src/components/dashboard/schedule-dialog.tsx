@@ -35,14 +35,16 @@ import { toast } from "sonner";
 import { format, addDays, isAfter } from "date-fns";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { SAMEER_PROMOWAVES_NEON_ID } from "@/lib/constants";
+import {
+  SAMEER_PROMOWAVES_NEON_ID,
+  PROMOWAVES_WORKSPACE_ID,
+} from "@/lib/constants";
 
 interface ScheduleCreationDialogProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   workspaceId: string;
 }
-
 
 export function ScheduleCreationDialog({
   isOpen,
@@ -52,7 +54,7 @@ export function ScheduleCreationDialog({
   const router = useRouter();
   const utils = api.useUtils();
   const [progress, setProgress] = useState<number>(0);
-  const isPromowaves = workspaceId === SAMEER_PROMOWAVES_NEON_ID;
+  const isPromowaves = workspaceId === PROMOWAVES_WORKSPACE_ID;
   const [newSchedule, setNewSchedule] = useState({
     name: "",
     description: "",

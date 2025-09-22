@@ -19,8 +19,14 @@ import { publishPostInternal } from "../utils/publishPost";
 import { fetchAndSelectStore, type Store } from "@/lib/promoStores";
 import { GoogleGenAI, Modality } from "@google/genai";
 import { env } from "@/env";
-import { buildEnhancedPrompt, buildPromptContent } from "../utils/gemniImageGeneration";
-import { SAMEER_PROMOWAVES_NEON_ID } from "@/lib/constants";
+import {
+  buildConsistentBrandPrompt,
+  buildPromptContent,
+} from "../utils/gemniImageGeneration";
+import {
+  SAMEER_PROMOWAVES_NEON_ID,
+  PROMOWAVES_WORKSPACE_ID,
+} from "@/lib/constants";
 
 type PromptPart =
   | { text: string }
@@ -433,7 +439,7 @@ export const postsRouter = createTRPCRouter({
       if (
         input.storeName &&
         input.storeUrl &&
-        input.workspaceId === SAMEER_PROMOWAVES_NEON_ID // Promowaves ID in Neon DB
+        input.workspaceId === PROMOWAVES_WORKSPACE_ID // Promowaves ID in Neon DB
       ) {
         await ctx.db.usedStore.create({
           data: {
@@ -637,19 +643,19 @@ export const postsRouter = createTRPCRouter({
           status: PostStatus.DRAFT,
           images: imageUrl
             ? {
-              upsert: {
-                where: { id: post.images[0]?.id || "dummy-id" },
-                create: {
-                  url: imageUrl,
-                  order: 0,
-                  isApproved: false,
+                upsert: {
+                  where: { id: post.images[0]?.id || "dummy-id" },
+                  create: {
+                    url: imageUrl,
+                    order: 0,
+                    isApproved: false,
+                  },
+                  update: {
+                    url: imageUrl,
+                    isApproved: false,
+                  },
                 },
-                update: {
-                  url: imageUrl,
-                  isApproved: false,
-                },
-              },
-            }
+              }
             : undefined,
         },
       });
@@ -926,8 +932,8 @@ export const postsRouter = createTRPCRouter({
                     - content: the text of the post (max 280 chars if Twitter is included, 2200 for Instagram, 3000 for LinkedIn, 63206 for Facebook).
                     - hashtags: 3-5 hashtags, array of strings, no duplicates from the provided list.
                     Ensure content is unique, engaging, and tailored to the platforms: ${schedule.platforms.join(
-                    ", "
-                  )}.
+                      ", "
+                    )}.
                   `,
                 },
                 {
@@ -937,8 +943,8 @@ export const postsRouter = createTRPCRouter({
                     Post index: ${postIndex} of ${totalPosts}
                     Platforms: ${schedule.platforms.join(", ")}
                     Avoid reusing these hashtags: ${Array.from(
-                    usedHashtags
-                  ).join(", ")}
+                      usedHashtags
+                    ).join(", ")}
                     Scheduled date: ${format(scheduledAt, "PPP")}
                   `,
                 },
@@ -1450,7 +1456,8 @@ export const postsRouter = createTRPCRouter({
                     STORE CONTEXT:
                     - Store: ${store.name}
                     - Category: ${store.category}
-                    - Description: ${store.description || "Premium quality products"
+                    - Description: ${
+                      store.description || "Premium quality products"
                     }
                     - URL: ${store.displayUrl}
                   `,
@@ -1468,8 +1475,8 @@ export const postsRouter = createTRPCRouter({
                     - Must emphasize Promowaves as the affiliate platform
                     - Show both store benefits AND Promowaves advantages
                     - Avoid these hashtags: ${Array.from(usedHashtags).join(
-                    ", "
-                  )}
+                      ", "
+                    )}
                     - Include store name: ${store.name}
                     - Make it feel like an exclusive deal through Promowaves
                     
@@ -1589,14 +1596,21 @@ export const postsRouter = createTRPCRouter({
     }),
 
   generateImagesForAllPostsOfPromowaves: protectedProcedure
-    .input(z.object({
-      scheduleId: z.string(),
-      workspaceId: z.string(),
-      imageSize: z.enum(['1024x1024', '1792x1024', '1024x1792']).default('1024x1024').optional(),
-      batchSize: z.number().min(1).max(10).default(5).optional()
-    }))
+    .input(
+      z.object({
+        scheduleId: z.string(),
+        workspaceId: z.string(),
+        // imageSize: z.enum(['1024x1024', '1792x1024', '1024x1792']).default('1024x1024').optional(),
+        batchSize: z.number().min(1).max(10).default(5).optional(),
+      })
+    )
     .mutation(async ({ ctx, input }) => {
-      const { scheduleId, workspaceId, imageSize = '1024x1024', batchSize = 5 } = input;
+      const { scheduleId, workspaceId, batchSize = 5 } = input;
+
+      // FIXED: Force consistent image size
+      const FIXED_IMAGE_SIZE = "1024x1024";
+      const FIXED_WIDTH = 1024;
+      const FIXED_HEIGHT = 1024;
 
       // Authorization checks (unchanged)
       if (!ctx.session.user.id) {
@@ -1670,7 +1684,8 @@ export const postsRouter = createTRPCRouter({
       if (posts.length === 0) {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: "No posts with approved content available for image generation",
+          message:
+            "No posts with approved content available for image generation",
         });
       }
 
@@ -1709,7 +1724,7 @@ export const postsRouter = createTRPCRouter({
                 where: {
                   workspaceId,
                   scheduleId,
-                  storeName: post.storeName || ""
+                  storeName: post.storeName || "",
                 },
               });
 
@@ -1719,11 +1734,14 @@ export const postsRouter = createTRPCRouter({
               }
 
               // Find store in Promowaves API response
-              const store = storeList.find(
-                (s: any) =>
-                  (s.name && s.name.toLowerCase() === (post.storeName || "").toLowerCase()) ||
-                  (s.displayUrl && s.displayUrl === post.storeName)
-              ) || null;
+              const store =
+                storeList.find(
+                  (s: any) =>
+                    (s.name &&
+                      s.name.toLowerCase() ===
+                        (post.storeName || "").toLowerCase()) ||
+                    (s.displayUrl && s.displayUrl === post.storeName)
+                ) || null;
 
               if (!store) {
                 console.error(`Store not found for ${post.storeName}`);
@@ -1736,13 +1754,14 @@ export const postsRouter = createTRPCRouter({
               );
 
               // Enhanced prompt for 1024x1024 square format
-              const effectivePrompt = schedule.imagePrompt || buildEnhancedPrompt({
-                storeName: store.name,
-                commission: commissionHighlight,
-                category: store.category,
-                displayUrl: store.displayUrl,
-                imageSize
-              });
+              const effectivePrompt =
+                schedule.imagePrompt ||
+                buildConsistentBrandPrompt({
+                  storeName: store.name,
+                  commission: commissionHighlight,
+                  category: store.category,
+                  displayUrl: store.displayUrl,
+                });
 
               // Build prompt content with proper image data
               const promptContent = await buildPromptContent({
@@ -1750,7 +1769,7 @@ export const postsRouter = createTRPCRouter({
                 workspaceUrl,
                 storeLogo: store.logo,
                 storeDisplayUrl: store.displayUrl,
-                commission: commissionHighlight
+                commission: commissionHighlight,
               });
 
               // Configure model parameters for better quality
@@ -1758,23 +1777,28 @@ export const postsRouter = createTRPCRouter({
                 model: "gemini-2.5-flash-image-preview",
                 generationConfig: {
                   responseMimeType: "image/png",
+                  // FIXED: Add size constraints in generation config
+                  maxOutputTokens: 8192,
+                  temperature: 0.1, // Low temperature for consistency
+                  topP: 0.8,
+                  topK: 20,
                   responseSchema: {
                     type: "object",
                     properties: {
-                      image: { type: "string", format: "base64" }
-                    }
-                  }
+                      image: { type: "string", format: "base64" },
+                    },
+                  },
                 },
                 safetySettings: [
                   {
                     category: "HARM_CATEGORY_HARASSMENT",
-                    threshold: "BLOCK_ONLY_HIGH"
+                    threshold: "BLOCK_ONLY_HIGH",
                   },
                   {
                     category: "HARM_CATEGORY_HATE_SPEECH",
-                    threshold: "BLOCK_ONLY_HIGH"
-                  }
-                ]
+                    threshold: "BLOCK_ONLY_HIGH",
+                  },
+                ],
               };
 
               // Generate with retry logic
@@ -1791,7 +1815,7 @@ export const postsRouter = createTRPCRouter({
                   // Add specific image size instruction to the prompt
                   const sizeInstructedContent = [...promptContent];
                   sizeInstructedContent[0] = {
-                    text: `${promptContent[0].text}\n\nIMAGE SPECIFICATIONS:\n- Generate a ${imageSize} image (square format)\n- High resolution, sharp details\n- Optimized for social media display`
+                    text: `${promptContent[0].text}\n\nCRITICAL SIZE REQUIREMENTS - NO EXCEPTIONS:\n- EXACT dimensions: ${FIXED_WIDTH}x${FIXED_HEIGHT} pixels\n- High resolution, sharp details\n- Optimized for social media display\n- MANDATORY: Perfect square aspect ratio (1:1)\n- OUTPUT FORMAT: PNG with exact ${FIXED_WIDTH}x${FIXED_HEIGHT} resolution\n- NO SCALING OR CROPPING - Generate at exact target size\n- VERIFY: Image must be exactly ${FIXED_WIDTH} pixels wide and ${FIXED_HEIGHT} pixels tall`,
                   };
 
                   const genResponse = await genAI.models.generateContent({
@@ -1803,27 +1827,33 @@ export const postsRouter = createTRPCRouter({
 
                   // Extract base64 image
                   if (genResponse.candidates?.length) {
-                    for (const part of genResponse.candidates[0]?.content?.parts || []) {
+                    for (const part of genResponse.candidates[0]?.content
+                      ?.parts || []) {
                       if (part.inlineData?.data) {
                         imageBase64 = part.inlineData.data;
                         break;
                       }
                     }
                   }
-
                 } catch (genError) {
                   console.error(`Attempt ${attempts} failed:`, genError);
                   if (attempts === maxAttempts) throw genError;
-                  await new Promise(resolve => setTimeout(resolve, 1000 * attempts)); // Exponential backoff
+                  await new Promise((resolve) =>
+                    setTimeout(resolve, 1000 * attempts)
+                  ); // Exponential backoff
                 }
               }
 
               if (!imageBase64) {
-                throw new Error("Failed to generate image after multiple attempts");
+                throw new Error(
+                  "Failed to generate image after multiple attempts"
+                );
               }
 
               // Upload the generated image
-              const uploadUrl = await uploadGeneratedImageFromBase64(imageBase64);
+              const uploadUrl = await uploadGeneratedImageFromBase64(
+                imageBase64
+              );
 
               // Log AI generation
               const aiGeneration = await ctx.db.aIGenerationLog.create({
@@ -1835,7 +1865,7 @@ export const postsRouter = createTRPCRouter({
                   type: "IMAGE",
                   prompt: effectivePrompt,
                   model: modelConfig.model,
-                  imageSize,
+                  imageSize: FIXED_IMAGE_SIZE,
                   duration: 0,
                   status: "COMPLETED",
                   cost: 0.02, // Implement cost calculation
@@ -1852,8 +1882,8 @@ export const postsRouter = createTRPCRouter({
                     aiPrompt: effectivePrompt,
                     isApproved: false,
                     aiGenerationId: aiGeneration.id,
-                    width: 1024,
-                    height: 1024,
+                    width: FIXED_WIDTH,
+                    height: FIXED_HEIGHT,
                   },
                 });
               } else {
@@ -1865,14 +1895,14 @@ export const postsRouter = createTRPCRouter({
                     isApproved: false,
                     order: 0,
                     aiGenerationId: aiGeneration.id,
-                    width: 1024,
-                    height: 1024,
+                    width: FIXED_WIDTH,
+                    height: FIXED_HEIGHT,
                   },
                 });
               }
               const currentLog = await ctx.db.aIGenerationLog.findUnique({
                 where: { id: aiGeneration.id },
-                select: { imageId: true }
+                select: { imageId: true },
               });
               // Update AI generation log
               if (!currentLog?.imageId) {
@@ -1886,9 +1916,11 @@ export const postsRouter = createTRPCRouter({
               }
 
               return { success: true, postId: post.id };
-
             } catch (error) {
-              console.error(`Failed to generate image for post ${post.id}:`, error);
+              console.error(
+                `Failed to generate image for post ${post.id}:`,
+                error
+              );
 
               // Log failed generation
               await ctx.db.aIGenerationLog.create({
@@ -1899,11 +1931,12 @@ export const postsRouter = createTRPCRouter({
                   scheduleId,
                   type: "IMAGE",
                   prompt: schedule.imagePrompt || "Default prompt",
-                  model: "gemini-2.0-flash-exp",
-                  imageSize,
+                  model: "gemini-2.5-flash-image-preview",
+                  imageSize: FIXED_IMAGE_SIZE,
                   duration: 0,
                   status: "FAILED",
-                  error: error instanceof Error ? error.message : "Unknown error",
+                  error:
+                    error instanceof Error ? error.message : "Unknown error",
                   cost: 0,
                 },
               });
@@ -1924,7 +1957,7 @@ export const postsRouter = createTRPCRouter({
 
         // Update progress
         const successCount = batchResults.filter(
-          r => r.status === 'fulfilled' && r.value.success
+          (r) => r.status === "fulfilled" && r.value.success
         ).length;
 
         completed += successCount;
@@ -1938,7 +1971,7 @@ export const postsRouter = createTRPCRouter({
 
         // Add delay between batches to avoid rate limiting
         if (i + batchSize < posts.length) {
-          await new Promise(resolve => setTimeout(resolve, 2000));
+          await new Promise((resolve) => setTimeout(resolve, 2000));
         }
       }
 
@@ -1947,9 +1980,11 @@ export const postsRouter = createTRPCRouter({
         imagesGenerated: completed,
         totalPosts: posts.length,
         failedPosts: posts.length - completed,
-        results: results.map(r =>
-          r.status === 'fulfilled' ? r.value : { success: false, error: r.reason }
-        )
+        results: results.map((r) =>
+          r.status === "fulfilled"
+            ? r.value
+            : { success: false, error: r.reason }
+        ),
       };
     }),
   getGenerationProgress: protectedProcedure
