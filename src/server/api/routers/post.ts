@@ -27,6 +27,16 @@ import {
   SAMEER_PROMOWAVES_NEON_ID,
   PROMOWAVES_WORKSPACE_ID,
 } from "@/lib/constants";
+import sharp from "sharp";
+
+async function enforceSize(base64: string, width: number, height: number) {
+  const buffer = Buffer.from(base64, "base64");
+  const resized = await sharp(buffer)
+    .resize(width, height, { fit: "cover" })
+    .png()
+    .toBuffer();
+  return resized.toString("base64");
+}
 
 type PromptPart =
   | { text: string }
@@ -1600,7 +1610,6 @@ export const postsRouter = createTRPCRouter({
       z.object({
         scheduleId: z.string(),
         workspaceId: z.string(),
-        // imageSize: z.enum(['1024x1024', '1792x1024', '1024x1792']).default('1024x1024').optional(),
         batchSize: z.number().min(1).max(10).default(5).optional(),
       })
     )
@@ -1609,8 +1618,8 @@ export const postsRouter = createTRPCRouter({
 
       // FIXED: Force consistent image size
       const FIXED_IMAGE_SIZE = "1024x1024";
-      const FIXED_WIDTH = 1024;
-      const FIXED_HEIGHT = 1024;
+      const FIXED_WIDTH = 1080;
+      const FIXED_HEIGHT = 1080;
 
       // Authorization checks (unchanged)
       if (!ctx.session.user.id) {
@@ -1831,6 +1840,11 @@ export const postsRouter = createTRPCRouter({
                       ?.parts || []) {
                       if (part.inlineData?.data) {
                         imageBase64 = part.inlineData.data;
+                        imageBase64 = await enforceSize(
+                          imageBase64,
+                          FIXED_WIDTH,
+                          FIXED_HEIGHT
+                        );
                         break;
                       }
                     }

@@ -25,7 +25,7 @@ MANDATORY SPECIFICATIONS:
   - Primary: Deep navy blue (#1a365d) or charcoal (#2d3748)
   - Secondary: Bright accent blue (#3182ce) or teal (#319795)  
   - Highlight: Gold/yellow (#ffd700) for offers
-  - Background: Clean white (#ffffff) or light gray (#f7fafc)
+  - Background: Always use a relevant full-bleed background image (photo, illustration, or gradient) that matches shopping/brand context. Never leave background plain white. Must feel premium, modern, and dynamic. Use subtle overlays if needed to keep text readable.
 
 • Typography Standards:
   - Header: Bold, modern sans-serif (Montserrat/Inter style)
@@ -57,8 +57,7 @@ MANDATORY SPECIFICATIONS:
 
 🏷️ BRAND CONSISTENCY RULES:
 • Style: Professional, trustworthy, premium feel
-• Mood: Confident, reliable, growth-focused  
-• Industry: ${category} sector aesthetic maintained
+• Mood: Confident, reliable, growth-focused
 • Effects: Subtle gradients, soft shadows, clean edges
 • Icons: Minimal, consistent stroke width (2px)
 
