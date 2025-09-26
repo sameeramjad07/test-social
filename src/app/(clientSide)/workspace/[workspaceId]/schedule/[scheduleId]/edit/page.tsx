@@ -118,7 +118,7 @@ export default function ScheduleEditorPage() {
   const params = useParams();
   const scheduleId = params.scheduleId as string;
   const workspaceId = params.workspaceId as string;
-  const isPromowaves = workspaceId === PROMOWAVES_WORKSPACE_ID;
+  const isPromowaves = workspaceId === SAMEER_PROMOWAVES_NEON_ID;
 
   // const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [bulkPrompt, setBulkPrompt] = useState("");

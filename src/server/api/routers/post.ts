@@ -449,7 +449,7 @@ export const postsRouter = createTRPCRouter({
       if (
         input.storeName &&
         input.storeUrl &&
-        input.workspaceId === PROMOWAVES_WORKSPACE_ID // Promowaves ID in Neon DB
+        input.workspaceId === SAMEER_PROMOWAVES_NEON_ID // Promowaves ID in Neon DB
       ) {
         await ctx.db.usedStore.create({
           data: {
@@ -1178,7 +1178,7 @@ export const postsRouter = createTRPCRouter({
               type: "IMAGE",
               prompt: effectivePrompt,
               model: "dall-e-3",
-              imageSize: "1024x1024",
+              imageSize: "1080x1080",
               duration, // Update with actual duration if available
               status: "COMPLETED",
               cost: 0, // Update with actual cost if applicable
@@ -1617,7 +1617,7 @@ export const postsRouter = createTRPCRouter({
       const { scheduleId, workspaceId, batchSize = 5 } = input;
 
       // FIXED: Force consistent image size
-      const FIXED_IMAGE_SIZE = "1024x1024";
+      const FIXED_IMAGE_SIZE = "1080x1080";
       const FIXED_WIDTH = 1080;
       const FIXED_HEIGHT = 1080;
 
@@ -1762,7 +1762,7 @@ export const postsRouter = createTRPCRouter({
                 store.commissionRanges || []
               );
 
-              // Enhanced prompt for 1024x1024 square format
+              // Enhanced prompt for 1080x1080 square format
               const effectivePrompt =
                 schedule.imagePrompt ||
                 buildConsistentBrandPrompt({
@@ -2000,6 +2000,369 @@ export const postsRouter = createTRPCRouter({
             : { success: false, error: r.reason }
         ),
       };
+    }),
+
+  generateImageForSinglePost: protectedProcedure
+    .input(
+      z.object({
+        postId: z.string(),
+        workspaceId: z.string(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { postId, workspaceId } = input;
+
+      // FIXED: Force consistent image size
+      const FIXED_IMAGE_SIZE = "1080x1080";
+      const FIXED_WIDTH = 1080;
+      const FIXED_HEIGHT = 1080;
+
+      // Authorization checks
+      if (!ctx.session.user.id) {
+        throw new TRPCError({
+          code: "UNAUTHORIZED",
+          message: "User session not found",
+        });
+      }
+
+      const member = await ctx.db.workspaceMember.findFirst({
+        where: {
+          workspaceId,
+          userId: ctx.session.user.id,
+        },
+        include: {
+          role: {
+            include: {
+              permissions: {
+                include: { permission: true },
+              },
+            },
+          },
+        },
+      });
+
+      if (!member) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Not a member of this workspace",
+        });
+      }
+
+      const hasPermission =
+        member.role.name === "owner" ||
+        member.role.permissions.some(
+          (rp) =>
+            rp.permission.resource === "posts" &&
+            rp.permission.action === "update"
+        );
+
+      if (!hasPermission) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You don't have permission to update posts",
+        });
+      }
+
+      const post = await ctx.db.post.findUnique({
+        where: { id: postId },
+        include: {
+          images: true,
+          schedule: {
+            include: {
+              workspace: true,
+            },
+          },
+        },
+      });
+
+      if (!post) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Post not found",
+        });
+      }
+
+      const schedule = post.schedule;
+      if (!schedule || schedule.workspaceId !== workspaceId) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Post does not belong to this workspace",
+        });
+      }
+
+      if (schedule.isActive) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Cannot generate images for active schedule",
+        });
+      }
+
+      if (post.status !== PostStatus.CONTENT_APPROVED) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Post content must be approved for image generation",
+        });
+      }
+
+      const workspaceUrl =
+        "https://promowaves.net/_next/image?url=%2F_next%2Fstatic%2Fmedia%2Flogo_close_beta.4fedd7a9.png&w=384&q=75";
+
+      // Fetch list of stores once
+      let storeList: any[] = [];
+      try {
+        const storesResp = await axios.get(
+          "https://promowaves.net/api/getStores",
+          {
+            timeout: 10000,
+          }
+        );
+        storeList = Array.isArray(storesResp.data) ? storesResp.data : [];
+      } catch (err) {
+        console.warn("Could not fetch store list from Promowaves API:", err);
+      }
+
+      // Process single post
+      try {
+        // Fetch the store details from UsedStore table
+        const usedStore = await ctx.db.usedStore.findFirst({
+          where: {
+            workspaceId,
+            scheduleId: schedule.id,
+            storeName: post.storeName || "",
+          },
+        });
+
+        if (!usedStore) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: `No store found for post ${post.id}`,
+          });
+        }
+
+        // Find store in Promowaves API response
+        const store =
+          storeList.find(
+            (s: any) =>
+              (s.name &&
+                s.name.toLowerCase() ===
+                  (post.storeName || "").toLowerCase()) ||
+              (s.displayUrl && s.displayUrl === post.storeName)
+          ) || null;
+
+        if (!store) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: `Store not found for ${post.storeName}`,
+          });
+        }
+
+        // Commission highlight text
+        const commissionHighlight = getBestCommissionHighlight(
+          store.commissionRanges || []
+        );
+
+        // Enhanced prompt for 1024x1024 square format
+        const effectivePrompt =
+          schedule.imagePrompt ||
+          buildConsistentBrandPrompt({
+            storeName: store.name,
+            commission: commissionHighlight,
+            category: store.category,
+            displayUrl: store.displayUrl,
+          });
+
+        // Build prompt content with proper image data
+        const promptContent = await buildPromptContent({
+          prompt: effectivePrompt,
+          workspaceUrl,
+          storeLogo: store.logo,
+          storeDisplayUrl: store.displayUrl,
+          commission: commissionHighlight,
+        });
+
+        // Configure model parameters for better quality
+        const modelConfig = {
+          model: "gemini-2.5-flash-image-preview",
+          generationConfig: {
+            responseMimeType: "image/png",
+            // FIXED: Add size constraints in generation config
+            maxOutputTokens: 8192,
+            temperature: 0.1, // Low temperature for consistency
+            topP: 0.8,
+            topK: 20,
+            responseSchema: {
+              type: "object",
+              properties: {
+                image: { type: "string", format: "base64" },
+              },
+            },
+          },
+          safetySettings: [
+            {
+              category: "HARM_CATEGORY_HARASSMENT",
+              threshold: "BLOCK_ONLY_HIGH",
+            },
+            {
+              category: "HARM_CATEGORY_HATE_SPEECH",
+              threshold: "BLOCK_ONLY_HIGH",
+            },
+          ],
+        };
+
+        // Generate with retry logic
+        let imageBase64: string | null = null;
+        let attempts = 0;
+        const maxAttempts = 3;
+
+        while (attempts < maxAttempts && !imageBase64) {
+          attempts++;
+
+          try {
+            const start = Date.now();
+
+            // Add specific image size instruction to the prompt
+            const sizeInstructedContent = [...promptContent];
+            sizeInstructedContent[0] = {
+              text: `${promptContent[0].text}\n\nCRITICAL SIZE REQUIREMENTS - NO EXCEPTIONS:\n- EXACT dimensions: ${FIXED_WIDTH}x${FIXED_HEIGHT} pixels\n- High resolution, sharp details\n- Optimized for social media display\n- MANDATORY: Perfect square aspect ratio (1:1)\n- OUTPUT FORMAT: PNG with exact ${FIXED_WIDTH}x${FIXED_HEIGHT} resolution\n- NO SCALING OR CROPPING - Generate at exact target size\n- VERIFY: Image must be exactly ${FIXED_WIDTH} pixels wide and ${FIXED_HEIGHT} pixels tall`,
+            };
+
+            const genResponse = await genAI.models.generateContent({
+              ...modelConfig,
+              contents: sizeInstructedContent,
+            });
+
+            const duration = (Date.now() - start) / 1000;
+
+            // Extract base64 image
+            if (genResponse.candidates?.length) {
+              for (const part of genResponse.candidates[0]?.content?.parts ||
+                []) {
+                if (part.inlineData?.data) {
+                  imageBase64 = part.inlineData.data;
+                  imageBase64 = await enforceSize(
+                    imageBase64,
+                    FIXED_WIDTH,
+                    FIXED_HEIGHT
+                  );
+                  break;
+                }
+              }
+            }
+          } catch (genError) {
+            console.error(`Attempt ${attempts} failed:`, genError);
+            if (attempts === maxAttempts) throw genError;
+            await new Promise((resolve) =>
+              setTimeout(resolve, 1000 * attempts)
+            ); // Exponential backoff
+          }
+        }
+
+        if (!imageBase64) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Failed to generate image after multiple attempts",
+          });
+        }
+
+        // Upload the generated image
+        const uploadUrl = await uploadGeneratedImageFromBase64(imageBase64);
+
+        // Log AI generation
+        const aiGeneration = await ctx.db.aIGenerationLog.create({
+          data: {
+            userId: ctx.session.user.id!,
+            workspaceId,
+            postId: post.id,
+            scheduleId: schedule.id,
+            type: "IMAGE",
+            prompt: effectivePrompt,
+            model: modelConfig.model,
+            imageSize: FIXED_IMAGE_SIZE,
+            duration: 0,
+            status: "COMPLETED",
+            cost: 0.02, // Implement cost calculation
+          },
+        });
+
+        // Update or create post image
+        let postImage;
+        if (post.images.length > 0 && post.images[0]?.id) {
+          postImage = await ctx.db.postImage.update({
+            where: { id: post.images[0].id },
+            data: {
+              url: uploadUrl,
+              aiPrompt: effectivePrompt,
+              isApproved: false,
+              aiGenerationId: aiGeneration.id,
+              width: FIXED_WIDTH,
+              height: FIXED_HEIGHT,
+            },
+          });
+        } else {
+          postImage = await ctx.db.postImage.create({
+            data: {
+              postId: post.id,
+              url: uploadUrl,
+              aiPrompt: effectivePrompt,
+              isApproved: false,
+              order: 0,
+              aiGenerationId: aiGeneration.id,
+              width: FIXED_WIDTH,
+              height: FIXED_HEIGHT,
+            },
+          });
+        }
+        const currentLog = await ctx.db.aIGenerationLog.findUnique({
+          where: { id: aiGeneration.id },
+          select: { imageId: true },
+        });
+        // Update AI generation log
+        if (!currentLog?.imageId) {
+          await ctx.db.aIGenerationLog.update({
+            where: { id: aiGeneration.id },
+            data: {
+              imageId: postImage.id,
+              status: "COMPLETED",
+            },
+          });
+        }
+
+        return {
+          success: true,
+          postId,
+          imageUrl: uploadUrl,
+          imageId: postImage.id,
+        };
+      } catch (error) {
+        console.error(`Failed to generate image for post ${postId}:`, error);
+
+        // Log failed generation
+        await ctx.db.aIGenerationLog.create({
+          data: {
+            userId: ctx.session.user.id!,
+            workspaceId,
+            postId,
+            scheduleId: schedule.id,
+            type: "IMAGE",
+            prompt: schedule.imagePrompt || "Default prompt",
+            model: "gemini-2.5-flash-image-preview",
+            imageSize: FIXED_IMAGE_SIZE,
+            duration: 0,
+            status: "FAILED",
+            error: error instanceof Error ? error.message : "Unknown error",
+            cost: 0,
+          },
+        });
+
+        if (error instanceof TRPCError) {
+          throw error;
+        }
+
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Failed to generate image",
+        });
+      }
     }),
   getGenerationProgress: protectedProcedure
     .input(z.object({ scheduleId: z.string() }))

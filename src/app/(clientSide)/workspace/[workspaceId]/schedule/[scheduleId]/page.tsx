@@ -96,7 +96,7 @@ export default function ScheduleViewPage() {
   const params = useParams();
   const scheduleId = params.scheduleId as string;
   const workspaceId = params.workspaceId as string;
-  const isPromowaves = workspaceId === PROMOWAVES_WORKSPACE_ID; // update here
+  const isPromowaves = workspaceId === SAMEER_PROMOWAVES_NEON_ID; // update here
 
   const { data: schedule, isLoading } = api.schedules.getSchedule.useQuery(
     { scheduleId, workspaceId },

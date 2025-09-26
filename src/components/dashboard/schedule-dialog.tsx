@@ -54,7 +54,7 @@ export function ScheduleCreationDialog({
   const router = useRouter();
   const utils = api.useUtils();
   const [progress, setProgress] = useState<number>(0);
-  const isPromowaves = workspaceId === PROMOWAVES_WORKSPACE_ID;
+  const isPromowaves = workspaceId === SAMEER_PROMOWAVES_NEON_ID;
   const [newSchedule, setNewSchedule] = useState({
     name: "",
     description: "",
