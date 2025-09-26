@@ -82,7 +82,10 @@ export class InstagramWrapper extends SocialMediaWrapper {
         expiresAt: new Date(Date.now() + expiresIn * 1000),
       };
     } catch (error: any) {
-      console.error("Instagram OAuth Error:", error.response?.data || error);
+      console.error(
+        "Instagram OAuth Error:",
+        error.response?.data || error.message || error
+      );
       this.handleApiError(error, "Instagram");
     }
   }

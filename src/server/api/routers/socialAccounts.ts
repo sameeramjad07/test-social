@@ -106,6 +106,7 @@ export const socialAccountsRouter = createTRPCRouter({
       }
 
       const authUrl = wrapper.getAuthUrl(stateToken);
+      console.log("Generated OAuth URL:", authUrl);
       return { authUrl };
     }),
 
@@ -191,6 +192,7 @@ export const socialAccountsRouter = createTRPCRouter({
       }
 
       const accountInfo = await wrapper.handleCallback(input.code, input.state);
+      console.log("Fetched account info:", accountInfo);
 
       // Save to database
       const socialAccount = await ctx.db.socialAccount.upsert({

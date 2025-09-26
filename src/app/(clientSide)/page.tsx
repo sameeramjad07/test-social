@@ -21,8 +21,23 @@ import {
   CheckCircle,
   Sparkles,
 } from "lucide-react";
+import { getServerAuthSession } from "@/server/auth/helpers";
+import { redirect } from "next/navigation";
 
-export default function HomePage() {
+export default async function HomePage() {
+  const session = await getServerAuthSession();
+  if (session) {
+    // Pick the default workspace if exists
+    const workspaces = session.user.workspaces ?? [];
+    if (workspaces.length > 0) {
+      // redirect directly to first workspace dashboard
+      redirect(`/workspace/${workspaces[0]?.id}/dashboard`);
+    } else {
+      // no workspace yet
+      redirect("/workspace");
+    }
+  }
+
   const features = [
     {
       icon: Zap,

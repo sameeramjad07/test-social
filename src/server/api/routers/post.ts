@@ -11,15 +11,83 @@ import {
 import OpenAI from "openai";
 import { format } from "date-fns";
 import type { SupportedPlatform } from "@/app/(clientSide)/workspace/[workspaceId]/schedule/[scheduleId]/posts/[postId]/page";
-import { uploadGeneratedImage, uploadGeneratedImageFromBase64 } from "@/lib/uploadthing-server";
+import {
+  uploadGeneratedImage,
+  uploadGeneratedImageFromBase64,
+} from "@/lib/uploadthing-server";
+import { publishPostInternal } from "../utils/publishPost";
 import { fetchAndSelectStore, type Store } from "@/lib/promoStores";
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Modality } from "@google/genai";
 import { env } from "@/env";
+import {
+  buildConsistentBrandPrompt,
+  buildPromptContent,
+} from "../utils/gemniImageGeneration";
+import {
+  SAMEER_PROMOWAVES_NEON_ID,
+  PROMOWAVES_WORKSPACE_ID,
+} from "@/lib/constants";
+import sharp from "sharp";
 
+async function enforceSize(base64: string, width: number, height: number) {
+  const buffer = Buffer.from(base64, "base64");
+  const resized = await sharp(buffer)
+    .resize(width, height, { fit: "cover" })
+    .png()
+    .toBuffer();
+  return resized.toString("base64");
+}
+
+type PromptPart =
+  | { text: string }
+  | { inlineData: { mimeType: string; data: string } };
+
+type CommissionRange = {
+  min: number;
+  max: number;
+  type: "percentage" | "fixed";
+};
+
+// Helper function to format commission data for display
+function formatCommissionDisplay(
+  commissions: Array<{ type: string; min: number; max: number }>
+): string | null {
+  if (!commissions || commissions.length === 0) return null;
+  const displays: string[] = [];
+  for (const commission of commissions) {
+    if (commission.type === "percentage") {
+      displays.push(`${commission.max}% Cashback`);
+    } else if (commission.type === "fixed") {
+      displays.push(`€${commission.max} Reward`);
+    }
+  }
+  return displays.join(" + ");
+}
+
+// Helper function to get the best commission highlight
+function getBestCommissionHighlight(
+  commissions: CommissionRange[]
+): string | null {
+  if (!commissions || commissions.length === 0) return null;
+
+  const percentage = commissions.find((c) => c.type === "percentage");
+  const fixed = commissions.find((c) => c.type === "fixed");
+
+  if (percentage && fixed) {
+    return `${percentage.max}% + €${fixed.max}`;
+  } else if (percentage) {
+    return `${percentage.max}% BACK`;
+  } else if (fixed) {
+    return `€${fixed.max} BONUS`;
+  }
+
+  return null;
+}
 
 const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
-const genAI = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
-
+const genAI = new GoogleGenAI({
+  apiKey: env.GEMINI_API_KEY,
+});
 
 const listPostsSchema = z.object({
   workspaceId: z.string(),
@@ -381,8 +449,7 @@ export const postsRouter = createTRPCRouter({
       if (
         input.storeName &&
         input.storeUrl &&
-        // input.workspaceId === "cmfcejqiw003go25g2vwaqiia" // PostWaves Promowaves ID
-        input.workspaceId === "cmfhdr7ba003gnv37cmewal29" // Promowaves ID in Neon DB
+        input.workspaceId === SAMEER_PROMOWAVES_NEON_ID // Promowaves ID in Neon DB
       ) {
         await ctx.db.usedStore.create({
           data: {
@@ -586,20 +653,126 @@ export const postsRouter = createTRPCRouter({
           status: PostStatus.DRAFT,
           images: imageUrl
             ? {
-              upsert: {
-                where: { id: post.images[0]?.id || "dummy-id" },
-                create: {
-                  url: imageUrl,
-                  order: 0,
-                  isApproved: false,
+                upsert: {
+                  where: { id: post.images[0]?.id || "dummy-id" },
+                  create: {
+                    url: imageUrl,
+                    order: 0,
+                    isApproved: false,
+                  },
+                  update: {
+                    url: imageUrl,
+                    isApproved: false,
+                  },
                 },
-                update: {
-                  url: imageUrl,
-                  isApproved: false,
-                },
-              },
-            }
+              }
             : undefined,
+        },
+      });
+
+      return { success: true, post: updatedPost };
+    }),
+
+  updateContentWithPrompt: protectedProcedure
+    .input(
+      z.object({
+        postId: z.string(),
+        workspaceId: z.string(),
+        instruction: z.string().min(1),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { postId, workspaceId, instruction } = input;
+
+      const post = await ctx.db.post.findUnique({
+        where: { id: postId },
+      });
+
+      if (!post) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Post not found",
+        });
+      }
+
+      // Permission checks (same as update)
+      const member = await ctx.db.workspaceMember.findFirst({
+        where: { workspaceId, userId: ctx.session.user.id },
+        include: {
+          role: {
+            include: {
+              permissions: { include: { permission: true } },
+            },
+          },
+        },
+      });
+
+      if (!member) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Not a member of this workspace",
+        });
+      }
+
+      const hasPermission =
+        member.role.name === "owner" ||
+        member.role.permissions.some(
+          (rp) =>
+            rp.permission.resource === "posts" &&
+            rp.permission.action === "update"
+        );
+
+      if (!hasPermission) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You don't have permission to update posts",
+        });
+      }
+
+      if (post.status === PostStatus.APPROVED) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Cannot update approved posts",
+        });
+      }
+
+      // === Call OpenAI ===
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `
+              You are an assistant that ONLY rewrites text.
+              Rules:
+              - Take the provided "current content" and the "instruction".
+              - Return ONLY the updated content, nothing else.
+              - Do not add explanations, hashtags, or JSON.
+            `,
+          },
+          {
+            role: "user",
+            content: `
+              Current content:
+              ${post.content}
+  
+              Instruction: ${instruction}
+            `,
+          },
+        ],
+        temperature: 0.7,
+        max_tokens: 1000,
+      });
+
+      const updatedContent =
+        response.choices[0]?.message?.content?.trim() || post.content;
+
+      // Save back
+      const updatedPost = await ctx.db.post.update({
+        where: { id: postId },
+        data: {
+          content: updatedContent,
+          status: PostStatus.DRAFT,
         },
       });
 
@@ -769,8 +942,8 @@ export const postsRouter = createTRPCRouter({
                     - content: the text of the post (max 280 chars if Twitter is included, 2200 for Instagram, 3000 for LinkedIn, 63206 for Facebook).
                     - hashtags: 3-5 hashtags, array of strings, no duplicates from the provided list.
                     Ensure content is unique, engaging, and tailored to the platforms: ${schedule.platforms.join(
-                    ", "
-                  )}.
+                      ", "
+                    )}.
                   `,
                 },
                 {
@@ -780,8 +953,8 @@ export const postsRouter = createTRPCRouter({
                     Post index: ${postIndex} of ${totalPosts}
                     Platforms: ${schedule.platforms.join(", ")}
                     Avoid reusing these hashtags: ${Array.from(
-                    usedHashtags
-                  ).join(", ")}
+                      usedHashtags
+                    ).join(", ")}
                     Scheduled date: ${format(scheduledAt, "PPP")}
                   `,
                 },
@@ -1005,7 +1178,7 @@ export const postsRouter = createTRPCRouter({
               type: "IMAGE",
               prompt: effectivePrompt,
               model: "dall-e-3",
-              imageSize: "1024x1024",
+              imageSize: "1080x1080",
               duration, // Update with actual duration if available
               status: "COMPLETED",
               cost: 0, // Update with actual cost if applicable
@@ -1201,6 +1374,18 @@ export const postsRouter = createTRPCRouter({
       let completed = 0;
       const usedHashtags: Set<string> = new Set(schedule.hashtags || []);
 
+      // Predefined engaging post templates focusing on Promowaves affiliate benefits
+      const postTemplates = [
+        "🚨 EXCLUSIVE DEAL ALERT! Get amazing discounts on {storeName} through Promowaves! 💰 Save big + earn cashback rewards! 🎯",
+        "💸 Smart shoppers choose Promowaves! Discover {storeName} deals with extra savings & commission rewards! 🛍️✨",
+        "🔥 LIMITED TIME: {storeName} + Promowaves = Double the savings! Get your exclusive discount now! ⏰💎",
+        "💰 Why pay full price? Shop {storeName} through Promowaves and get cashback + exclusive deals! 🎁🚀",
+        "🛍️ PROMOWAVES EXCLUSIVE: Unlock hidden savings at {storeName}! Your wallet will thank you! 💳✨",
+        "⚡ Flash Deal Alert! {storeName} via Promowaves = Instant savings + commission rewards! Don't miss out! 🏃‍♂️💨",
+        "🎯 Pro tip: Always shop through Promowaves! Get {storeName} deals + earn while you save! 💪🔥",
+        "🌟 TRENDING NOW: {storeName} exclusive offers only on Promowaves! Join thousands saving smart! 📈💰",
+      ];
+
       for (const date of dates) {
         for (const timeSlot of schedule.timeSlots) {
           const [hh, mm] = timeSlot.split(":").map(Number);
@@ -1223,65 +1408,139 @@ export const postsRouter = createTRPCRouter({
               scheduleId
             );
 
-            // Measure duration (if you want to track how long each call took)
+            // Get character limits for platforms
+            const maxChars = Math.min(
+              ...schedule.platforms.map((platform) => {
+                switch (platform.toLowerCase()) {
+                  case "twitter":
+                  case "x":
+                    return 280;
+                  case "instagram":
+                    return 2200;
+                  case "linkedin":
+                    return 3000;
+                  case "facebook":
+                    return 63206;
+                  default:
+                    return 280;
+                }
+              })
+            );
+
+            // Select a random template
+            const template =
+              postTemplates[Math.floor(Math.random() * postTemplates.length)] ??
+              "🔥 Shop {storeName} through Promowaves for cashback + discounts!";
+
             const startTime = Date.now();
 
-            // Generate post content
+            // Enhanced prompt for better Promowaves-focused content
             const contentResponse = await openai.chat.completions.create({
               model: "gpt-4o-mini",
               messages: [
                 {
                   role: "system",
                   content: `
-                    You are an AI content creator for an affiliate marketing platform.
-                    Generate exactly one social media post for the Promowaves workspace.
-                    Your output must be valid JSON with the following keys:
-                    - content: the text of the post (max 280 chars if Twitter is included, 2200 for Instagram, 3000 for LinkedIn, 63206 for Facebook).
-                    - hashtags: 3-5 hashtags, array of strings, no duplicates from the provided list.
-                    Use the store details to create an engaging post:
-                    - Store Name: ${store.name}
-                    - Description: ${store.description || "No description available"
-                    }
+                    You are an expert social media content creator for PROMOWAVES - a leading affiliate marketing platform.
+                    
+                    BRAND IDENTITY:
+                    - Promowaves is THE affiliate marketing platform for smart shoppers
+                    - Users get CASHBACK + EXCLUSIVE DISCOUNTS when shopping through Promowaves
+                    - We partner with top stores to provide the best deals
+                    - Our value proposition: "Why pay full price when you can save + earn?"
+                    
+                    CONTENT REQUIREMENTS:
+                    - ALWAYS mention "Promowaves" prominently in every post
+                    - Highlight the DUAL BENEFIT: savings + cashback/commission
+                    - Use action-oriented, FOMO-inducing language
+                    - Include clear call-to-action
+                    - Stay within ${maxChars} characters
+                    - Make it feel exclusive and urgent
+                    
+                    TONE: Exciting, benefit-focused, trustworthy, urgent
+                    
+                    OUTPUT FORMAT: Valid JSON with keys:
+                    - content: engaging post text emphasizing Promowaves benefits
+                    - hashtags: 3-5 relevant hashtags (array of strings)
+                    
+                    STORE CONTEXT:
+                    - Store: ${store.name}
                     - Category: ${store.category}
-                    - Display URL: ${store.displayUrl}
-                    Ensure content is unique, promotional, and tailored to the platforms: ${schedule.platforms.join(
-                      ", "
-                    )}.
+                    - Description: ${
+                      store.description || "Premium quality products"
+                    }
+                    - URL: ${store.displayUrl}
                   `,
                 },
                 {
                   role: "user",
                   content: `
-                    Global prompt: "${prompt}"
-                    Post index: ${postIndex} of ${totalPosts}
-                    Platforms: ${schedule.platforms.join(", ")}
-                    Avoid reusing these hashtags: ${Array.from(
-                    usedHashtags
-                  ).join(", ")}
-                    Scheduled date: ${format(scheduledAt, "PPP")}
+                    Create an engaging post using this template as inspiration: "${template}"
+                    
+                    Requirements:
+                    - Post ${postIndex} of ${totalPosts}
+                    - Platforms: ${schedule.platforms.join(", ")}
+                    - Global prompt context: "${prompt}"
+                    - Scheduled for: ${format(scheduledAt, "PPP")}
+                    - Must emphasize Promowaves as the affiliate platform
+                    - Show both store benefits AND Promowaves advantages
+                    - Avoid these hashtags: ${Array.from(usedHashtags).join(
+                      ", "
+                    )}
+                    - Include store name: ${store.name}
+                    - Make it feel like an exclusive deal through Promowaves
+                    
+                    Focus on why shopping through Promowaves is better than direct shopping!
                   `,
                 },
               ],
-              temperature: 0.8,
+              temperature: 0.9,
               max_tokens: 500,
             });
 
-            const duration = (Date.now() - startTime) / 1000; // in seconds
+            const duration = (Date.now() - startTime) / 1000;
 
             let parsed: { content: string; hashtags: string[] } = {
               content: "",
               hashtags: [],
             };
+
             try {
               parsed = JSON.parse(
                 contentResponse.choices[0]?.message?.content || "{}"
               );
             } catch (err) {
+              // Enhanced fallback content with Promowaves focus
+              const fallbackTemplate = template.replace(
+                "{storeName}",
+                store.name
+              );
               parsed = {
-                content: `Discover ${store.name} at ${store.displayUrl}! Shop now for great deals!`,
-                hashtags: [`#${store.category.replace(/\s/g, "")}`, "#ShopNow"],
+                content: `${fallbackTemplate} Shop through Promowaves and get exclusive cashback rewards! 🔗 ${store.displayUrl}`,
+                hashtags: [
+                  `#Promowaves`,
+                  `#${store.category.replace(/\s/g, "")}`,
+                  "#CashbackDeals",
+                  "#ExclusiveOffers",
+                ],
               };
             }
+
+            // Ensure Promowaves is mentioned if somehow missing
+            if (!parsed.content.toLowerCase().includes("promowaves")) {
+              parsed.content = `🔥 Promowaves Exclusive: ${parsed.content}`;
+            }
+
+            // Add mandatory Promowaves hashtag
+            const promoHashtags = [
+              "#Promowaves",
+              "#AffiliateDeals",
+              "#CashbackRewards",
+            ];
+            parsed.hashtags = [
+              ...promoHashtags,
+              ...parsed.hashtags.filter((h) => !promoHashtags.includes(h)),
+            ];
 
             // Deduplicate hashtags
             parsed.hashtags = parsed.hashtags.filter(
@@ -1289,7 +1548,7 @@ export const postsRouter = createTRPCRouter({
             );
             parsed.hashtags.forEach((h) => usedHashtags.add(h));
 
-            // Create post with store details
+            // Create post with enhanced store details
             const post = await ctx.db.post.create({
               data: {
                 workspaceId,
@@ -1307,25 +1566,25 @@ export const postsRouter = createTRPCRouter({
                   connect: socialAccounts.map(({ id }) => ({ id })),
                 },
                 scheduleId,
-                storeName: store.name, // Store store name
-                storeUrl: store.displayUrl, // Store store URL
+                storeName: store.name,
+                storeUrl: store.displayUrl,
               },
             });
 
-            // ==== Add AI Generation Log ====
+            // Add AI Generation Log
             await ctx.db.aIGenerationLog.create({
               data: {
                 userId: ctx.session.user.id,
                 workspaceId,
                 postId: post.id,
                 scheduleId,
-                type: "TEXT", // from AIGenerationType enum
-                prompt,
+                type: "TEXT",
+                prompt: `${prompt} | Template: ${template}`,
                 model: "gpt-4o-mini",
                 tokens: contentResponse.usage?.total_tokens ?? null,
                 duration,
-                status: "COMPLETED", // from AIGenerationStatus enum
-                cost: 0, // if you track OpenAI costs, calculate here
+                status: "COMPLETED",
+                cost: 0,
               },
             });
 
@@ -1347,9 +1606,20 @@ export const postsRouter = createTRPCRouter({
     }),
 
   generateImagesForAllPostsOfPromowaves: protectedProcedure
-    .input(z.object({ scheduleId: z.string(), workspaceId: z.string() }))
+    .input(
+      z.object({
+        scheduleId: z.string(),
+        workspaceId: z.string(),
+        batchSize: z.number().min(1).max(10).default(5).optional(),
+      })
+    )
     .mutation(async ({ ctx, input }) => {
-      const { scheduleId, workspaceId } = input;
+      const { scheduleId, workspaceId, batchSize = 5 } = input;
+
+      // FIXED: Force consistent image size
+      const FIXED_IMAGE_SIZE = "1080x1080";
+      const FIXED_WIDTH = 1080;
+      const FIXED_HEIGHT = 1080;
 
       // Authorization checks (unchanged)
       if (!ctx.session.user.id) {
@@ -1358,6 +1628,7 @@ export const postsRouter = createTRPCRouter({
           message: "User session not found",
         });
       }
+
       const member = await ctx.db.workspaceMember.findFirst({
         where: {
           workspaceId,
@@ -1373,12 +1644,14 @@ export const postsRouter = createTRPCRouter({
           },
         },
       });
+
       if (!member) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "Not a member of this workspace",
         });
       }
+
       const hasPermission =
         member.role.name === "owner" ||
         member.role.permissions.some(
@@ -1386,6 +1659,7 @@ export const postsRouter = createTRPCRouter({
             rp.permission.resource === "posts" &&
             rp.permission.action === "update"
         );
+
       if (!hasPermission) {
         throw new TRPCError({
           code: "FORBIDDEN",
@@ -1397,12 +1671,14 @@ export const postsRouter = createTRPCRouter({
         where: { id: scheduleId },
         include: { posts: { include: { images: true } } },
       });
+
       if (!schedule || schedule.workspaceId !== workspaceId) {
         throw new TRPCError({
           code: "NOT_FOUND",
           message: "Schedule not found",
         });
       }
+
       if (schedule.isActive) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -1413,6 +1689,7 @@ export const postsRouter = createTRPCRouter({
       const posts = schedule.posts.filter(
         (post) => post.status === PostStatus.CONTENT_APPROVED
       );
+
       if (posts.length === 0) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -1429,180 +1706,618 @@ export const postsRouter = createTRPCRouter({
         update: { total: totalImages, completed: 0 },
       });
 
-      const workspace = await ctx.db.workspace.findUnique({
-        where: { id: workspaceId },
-        select: { logoUrl: true },
-      });
-      if (!workspace || !workspace.logoUrl) {
+      const workspaceUrl =
+        "https://promowaves.net/_next/image?url=%2F_next%2Fstatic%2Fmedia%2Flogo_close_beta.4fedd7a9.png&w=384&q=75";
+
+      // Fetch list of stores once (cache per run)
+      let storeList: any[] = [];
+      try {
+        const storesResp = await axios.get(
+          "https://promowaves.net/api/getStores",
+          {
+            timeout: 10000,
+          }
+        );
+        storeList = Array.isArray(storesResp.data) ? storesResp.data : [];
+      } catch (err) {
+        console.warn("Could not fetch store list from Promowaves API:", err);
+      }
+
+      // Helper function to process images in batches
+      const processBatch = async (batch: typeof posts) => {
+        return Promise.allSettled(
+          batch.map(async (post) => {
+            try {
+              // Fetch the store details from UsedStore table
+              const usedStore = await ctx.db.usedStore.findFirst({
+                where: {
+                  workspaceId,
+                  scheduleId,
+                  storeName: post.storeName || "",
+                },
+              });
+
+              if (!usedStore) {
+                console.error(`No store found for post ${post.id}`);
+                return { success: false, postId: post.id };
+              }
+
+              // Find store in Promowaves API response
+              const store =
+                storeList.find(
+                  (s: any) =>
+                    (s.name &&
+                      s.name.toLowerCase() ===
+                        (post.storeName || "").toLowerCase()) ||
+                    (s.displayUrl && s.displayUrl === post.storeName)
+                ) || null;
+
+              if (!store) {
+                console.error(`Store not found for ${post.storeName}`);
+                return { success: false, postId: post.id };
+              }
+
+              // Commission highlight text
+              const commissionHighlight = getBestCommissionHighlight(
+                store.commissionRanges || []
+              );
+
+              // Enhanced prompt for 1080x1080 square format
+              const effectivePrompt =
+                schedule.imagePrompt ||
+                buildConsistentBrandPrompt({
+                  storeName: store.name,
+                  commission: commissionHighlight,
+                  category: store.category,
+                  displayUrl: store.displayUrl,
+                });
+
+              // Build prompt content with proper image data
+              const promptContent = await buildPromptContent({
+                prompt: effectivePrompt,
+                workspaceUrl,
+                storeLogo: store.logo,
+                storeDisplayUrl: store.displayUrl,
+                commission: commissionHighlight,
+              });
+
+              // Configure model parameters for better quality
+              const modelConfig = {
+                model: "gemini-2.5-flash-image-preview",
+                generationConfig: {
+                  responseMimeType: "image/png",
+                  // FIXED: Add size constraints in generation config
+                  maxOutputTokens: 8192,
+                  temperature: 0.1, // Low temperature for consistency
+                  topP: 0.8,
+                  topK: 20,
+                  responseSchema: {
+                    type: "object",
+                    properties: {
+                      image: { type: "string", format: "base64" },
+                    },
+                  },
+                },
+                safetySettings: [
+                  {
+                    category: "HARM_CATEGORY_HARASSMENT",
+                    threshold: "BLOCK_ONLY_HIGH",
+                  },
+                  {
+                    category: "HARM_CATEGORY_HATE_SPEECH",
+                    threshold: "BLOCK_ONLY_HIGH",
+                  },
+                ],
+              };
+
+              // Generate with retry logic
+              let imageBase64: string | null = null;
+              let attempts = 0;
+              const maxAttempts = 3;
+
+              while (attempts < maxAttempts && !imageBase64) {
+                attempts++;
+
+                try {
+                  const start = Date.now();
+
+                  // Add specific image size instruction to the prompt
+                  const sizeInstructedContent = [...promptContent];
+                  sizeInstructedContent[0] = {
+                    text: `${promptContent[0].text}\n\nCRITICAL SIZE REQUIREMENTS - NO EXCEPTIONS:\n- EXACT dimensions: ${FIXED_WIDTH}x${FIXED_HEIGHT} pixels\n- High resolution, sharp details\n- Optimized for social media display\n- MANDATORY: Perfect square aspect ratio (1:1)\n- OUTPUT FORMAT: PNG with exact ${FIXED_WIDTH}x${FIXED_HEIGHT} resolution\n- NO SCALING OR CROPPING - Generate at exact target size\n- VERIFY: Image must be exactly ${FIXED_WIDTH} pixels wide and ${FIXED_HEIGHT} pixels tall`,
+                  };
+
+                  const genResponse = await genAI.models.generateContent({
+                    ...modelConfig,
+                    contents: sizeInstructedContent,
+                  });
+
+                  const duration = (Date.now() - start) / 1000;
+
+                  // Extract base64 image
+                  if (genResponse.candidates?.length) {
+                    for (const part of genResponse.candidates[0]?.content
+                      ?.parts || []) {
+                      if (part.inlineData?.data) {
+                        imageBase64 = part.inlineData.data;
+                        imageBase64 = await enforceSize(
+                          imageBase64,
+                          FIXED_WIDTH,
+                          FIXED_HEIGHT
+                        );
+                        break;
+                      }
+                    }
+                  }
+                } catch (genError) {
+                  console.error(`Attempt ${attempts} failed:`, genError);
+                  if (attempts === maxAttempts) throw genError;
+                  await new Promise((resolve) =>
+                    setTimeout(resolve, 1000 * attempts)
+                  ); // Exponential backoff
+                }
+              }
+
+              if (!imageBase64) {
+                throw new Error(
+                  "Failed to generate image after multiple attempts"
+                );
+              }
+
+              // Upload the generated image
+              const uploadUrl = await uploadGeneratedImageFromBase64(
+                imageBase64
+              );
+
+              // Log AI generation
+              const aiGeneration = await ctx.db.aIGenerationLog.create({
+                data: {
+                  userId: ctx.session.user.id!,
+                  workspaceId,
+                  postId: post.id,
+                  scheduleId,
+                  type: "IMAGE",
+                  prompt: effectivePrompt,
+                  model: modelConfig.model,
+                  imageSize: FIXED_IMAGE_SIZE,
+                  duration: 0,
+                  status: "COMPLETED",
+                  cost: 0.02, // Implement cost calculation
+                },
+              });
+
+              // Update or create post image
+              let postImage;
+              if (post.images.length > 0 && post.images[0]?.id) {
+                postImage = await ctx.db.postImage.update({
+                  where: { id: post.images[0].id },
+                  data: {
+                    url: uploadUrl,
+                    aiPrompt: effectivePrompt,
+                    isApproved: false,
+                    aiGenerationId: aiGeneration.id,
+                    width: FIXED_WIDTH,
+                    height: FIXED_HEIGHT,
+                  },
+                });
+              } else {
+                postImage = await ctx.db.postImage.create({
+                  data: {
+                    postId: post.id,
+                    url: uploadUrl,
+                    aiPrompt: effectivePrompt,
+                    isApproved: false,
+                    order: 0,
+                    aiGenerationId: aiGeneration.id,
+                    width: FIXED_WIDTH,
+                    height: FIXED_HEIGHT,
+                  },
+                });
+              }
+              const currentLog = await ctx.db.aIGenerationLog.findUnique({
+                where: { id: aiGeneration.id },
+                select: { imageId: true },
+              });
+              // Update AI generation log
+              if (!currentLog?.imageId) {
+                await ctx.db.aIGenerationLog.update({
+                  where: { id: aiGeneration.id },
+                  data: {
+                    imageId: postImage.id,
+                    status: "COMPLETED",
+                  },
+                });
+              }
+
+              return { success: true, postId: post.id };
+            } catch (error) {
+              console.error(
+                `Failed to generate image for post ${post.id}:`,
+                error
+              );
+
+              // Log failed generation
+              await ctx.db.aIGenerationLog.create({
+                data: {
+                  userId: ctx.session.user.id!,
+                  workspaceId,
+                  postId: post.id,
+                  scheduleId,
+                  type: "IMAGE",
+                  prompt: schedule.imagePrompt || "Default prompt",
+                  model: "gemini-2.5-flash-image-preview",
+                  imageSize: FIXED_IMAGE_SIZE,
+                  duration: 0,
+                  status: "FAILED",
+                  error:
+                    error instanceof Error ? error.message : "Unknown error",
+                  cost: 0,
+                },
+              });
+
+              return { success: false, postId: post.id, error };
+            }
+          })
+        );
+      };
+
+      // Process posts in batches for better performance
+      let completed = 0;
+      const results = [];
+
+      for (let i = 0; i < posts.length; i += batchSize) {
+        const batch = posts.slice(i, i + batchSize);
+        const batchResults = await processBatch(batch);
+
+        // Update progress
+        const successCount = batchResults.filter(
+          (r) => r.status === "fulfilled" && r.value.success
+        ).length;
+
+        completed += successCount;
+
+        await ctx.db.postGenerationProgress.update({
+          where: { scheduleId },
+          data: { completed },
+        });
+
+        results.push(...batchResults);
+
+        // Add delay between batches to avoid rate limiting
+        if (i + batchSize < posts.length) {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+        }
+      }
+
+      return {
+        success: true,
+        imagesGenerated: completed,
+        totalPosts: posts.length,
+        failedPosts: posts.length - completed,
+        results: results.map((r) =>
+          r.status === "fulfilled"
+            ? r.value
+            : { success: false, error: r.reason }
+        ),
+      };
+    }),
+
+  generateImageForSinglePost: protectedProcedure
+    .input(
+      z.object({
+        postId: z.string(),
+        workspaceId: z.string(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { postId, workspaceId } = input;
+
+      // FIXED: Force consistent image size
+      const FIXED_IMAGE_SIZE = "1080x1080";
+      const FIXED_WIDTH = 1080;
+      const FIXED_HEIGHT = 1080;
+
+      // Authorization checks
+      if (!ctx.session.user.id) {
         throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "Workspace logo not found",
+          code: "UNAUTHORIZED",
+          message: "User session not found",
         });
       }
 
-      let completed = 0;
-      for (const post of posts) {
+      const member = await ctx.db.workspaceMember.findFirst({
+        where: {
+          workspaceId,
+          userId: ctx.session.user.id,
+        },
+        include: {
+          role: {
+            include: {
+              permissions: {
+                include: { permission: true },
+              },
+            },
+          },
+        },
+      });
+
+      if (!member) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Not a member of this workspace",
+        });
+      }
+
+      const hasPermission =
+        member.role.name === "owner" ||
+        member.role.permissions.some(
+          (rp) =>
+            rp.permission.resource === "posts" &&
+            rp.permission.action === "update"
+        );
+
+      if (!hasPermission) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You don't have permission to update posts",
+        });
+      }
+
+      const post = await ctx.db.post.findUnique({
+        where: { id: postId },
+        include: {
+          images: true,
+          schedule: {
+            include: {
+              workspace: true,
+            },
+          },
+        },
+      });
+
+      if (!post) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Post not found",
+        });
+      }
+
+      const schedule = post.schedule;
+      if (!schedule || schedule.workspaceId !== workspaceId) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Post does not belong to this workspace",
+        });
+      }
+
+      if (schedule.isActive) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Cannot generate images for active schedule",
+        });
+      }
+
+      if (post.status !== PostStatus.CONTENT_APPROVED) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Post content must be approved for image generation",
+        });
+      }
+
+      const workspaceUrl =
+        "https://promowaves.net/_next/image?url=%2F_next%2Fstatic%2Fmedia%2Flogo_close_beta.4fedd7a9.png&w=384&q=75";
+
+      // Fetch list of stores once
+      let storeList: any[] = [];
+      try {
+        const storesResp = await axios.get(
+          "https://promowaves.net/api/getStores",
+          {
+            timeout: 10000,
+          }
+        );
+        storeList = Array.isArray(storesResp.data) ? storesResp.data : [];
+      } catch (err) {
+        console.warn("Could not fetch store list from Promowaves API:", err);
+      }
+
+      // Process single post
+      try {
         // Fetch the store details from UsedStore table
         const usedStore = await ctx.db.usedStore.findFirst({
-          where: { workspaceId, scheduleId, storeName: post.storeName || "" },
+          where: {
+            workspaceId,
+            scheduleId: schedule.id,
+            storeName: post.storeName || "",
+          },
         });
 
         if (!usedStore) {
-          console.error(`No store found for post ${post.id}`);
-          continue;
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: `No store found for post ${post.id}`,
+          });
         }
 
-        // Fetch store details from API to get logo
-        const storeResponse = await axios.get(
-          "https://promowaves.net/api/getStores"
-        );
-        const store = storeResponse.data.find(
-          (s: Store) => s.name === post.storeName
-        );
+        // Find store in Promowaves API response
+        const store =
+          storeList.find(
+            (s: any) =>
+              (s.name &&
+                s.name.toLowerCase() ===
+                  (post.storeName || "").toLowerCase()) ||
+              (s.displayUrl && s.displayUrl === post.storeName)
+          ) || null;
 
-        if (!store || !store.logo) {
-          console.error(`Store or logo not found for ${post.storeName}`);
-          continue;
+        if (!store) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: `Store not found for ${post.storeName}`,
+          });
         }
 
+        // Commission highlight text
+        const commissionHighlight = getBestCommissionHighlight(
+          store.commissionRanges || []
+        );
+
+        // Enhanced prompt for 1024x1024 square format
         const effectivePrompt =
           schedule.imagePrompt ||
-          `Create a professional promotional banner for social media marketing.
-                Design Requirements:
-                - Format: Eye-catching discount promotion banner optimized for social media
-                - Featured Elements:
-                • Promowaves logo (top or corner placement)
-                • ${store.name} logo (prominent co-branding)
-                • " ${store.description} " store Desctiption
-                • Bold discount percentage or offer (e.g., "50% OFF", "FLASH SALE", "LIMITED TIME")
-                • Call-to-action text (e.g., "Shop Now", "Get Deal", "Save Today")
-                • Promo code if applicable (in readable, standout format)
-
-                Visual Style:
-                - Design aesthetic: Modern, vibrant, high-converting promotional graphics
-                - Color scheme: High contrast with attention-grabbing elements
-                - Category theme: ${store.category} industry visuals as subtle background
-                - Typography: Bold, readable fonts that command attention
-                - Layout: Professional banner composition with clear visual hierarchy
-
-                Technical Specs:
-                - Optimized for ${'social media'} dimensions
-                - High resolution with crisp text rendering
-                - Mobile-friendly readability
-                - Professional retail promotion quality`;
-
-        try {
-          const start = Date.now();
-
-          // Prepare content array with logos if they exist
-          const promptContent = [];
-
-          // Add text prompt
-          promptContent.push({ text: effectivePrompt });
-
-          // Add workspace logo if available
-          if (workspace.logoUrl) {
-            const logoResponse = await fetch(workspace.logoUrl);
-            const logoBuffer = await logoResponse.arrayBuffer();
-            const nodeBuffer = Buffer.from(logoBuffer);
-            const logoBase64 = nodeBuffer.toString('base64');
-
-            promptContent.push({
-              inlineData: {
-                mimeType: "image/png",
-                data: logoBase64,
-              },
-            });
-          }
-
-          // Add store logo if available
-          if (store.logo) {
-            const storeLogoResponse = await fetch(store.logo);
-            const storeLogoBuffer = await storeLogoResponse.arrayBuffer();
-            const nodeBuffer = Buffer.from(storeLogoBuffer);
-            const storeLogoBase64 = nodeBuffer.toString('base64');
-
-            promptContent.push({
-              inlineData: {
-                mimeType: "image/png",
-                data: storeLogoBase64,
-              },
-            });
-          }
-
-          // Generate image using Nano Banana
-          const response = await genAI.models.generateContent({
-            model: "gemini-2.5-flash-image-preview",
-            contents: promptContent,
+          buildConsistentBrandPrompt({
+            storeName: store.name,
+            commission: commissionHighlight,
+            category: store.category,
+            displayUrl: store.displayUrl,
           });
 
-          const duration = (Date.now() - start) / 1000; // in seconds
+        // Build prompt content with proper image data
+        const promptContent = await buildPromptContent({
+          prompt: effectivePrompt,
+          workspaceUrl,
+          storeLogo: store.logo,
+          storeDisplayUrl: store.displayUrl,
+          commission: commissionHighlight,
+        });
 
-          // Extract generated image from response
-          let imageBase64: string | null | undefined = null;
+        // Configure model parameters for better quality
+        const modelConfig = {
+          model: "gemini-2.5-flash-image-preview",
+          generationConfig: {
+            responseMimeType: "image/png",
+            // FIXED: Add size constraints in generation config
+            maxOutputTokens: 8192,
+            temperature: 0.1, // Low temperature for consistency
+            topP: 0.8,
+            topK: 20,
+            responseSchema: {
+              type: "object",
+              properties: {
+                image: { type: "string", format: "base64" },
+              },
+            },
+          },
+          safetySettings: [
+            {
+              category: "HARM_CATEGORY_HARASSMENT",
+              threshold: "BLOCK_ONLY_HIGH",
+            },
+            {
+              category: "HARM_CATEGORY_HATE_SPEECH",
+              threshold: "BLOCK_ONLY_HIGH",
+            },
+          ],
+        };
 
+        // Generate with retry logic
+        let imageBase64: string | null = null;
+        let attempts = 0;
+        const maxAttempts = 3;
 
-          const candidates = response.candidates ?? [];
-          if (candidates.length > 0) {
-            const parts = candidates[0]?.content?.parts ?? [];
-            for (const part of parts) {
-              if (part.inlineData?.data) {
-                imageBase64 = part.inlineData.data;
-                break;
+        while (attempts < maxAttempts && !imageBase64) {
+          attempts++;
+
+          try {
+            const start = Date.now();
+
+            // Add specific image size instruction to the prompt
+            const sizeInstructedContent = [...promptContent];
+            sizeInstructedContent[0] = {
+              text: `${promptContent[0].text}\n\nCRITICAL SIZE REQUIREMENTS - NO EXCEPTIONS:\n- EXACT dimensions: ${FIXED_WIDTH}x${FIXED_HEIGHT} pixels\n- High resolution, sharp details\n- Optimized for social media display\n- MANDATORY: Perfect square aspect ratio (1:1)\n- OUTPUT FORMAT: PNG with exact ${FIXED_WIDTH}x${FIXED_HEIGHT} resolution\n- NO SCALING OR CROPPING - Generate at exact target size\n- VERIFY: Image must be exactly ${FIXED_WIDTH} pixels wide and ${FIXED_HEIGHT} pixels tall`,
+            };
+
+            const genResponse = await genAI.models.generateContent({
+              ...modelConfig,
+              contents: sizeInstructedContent,
+            });
+
+            const duration = (Date.now() - start) / 1000;
+
+            // Extract base64 image
+            if (genResponse.candidates?.length) {
+              for (const part of genResponse.candidates[0]?.content?.parts ||
+                []) {
+                if (part.inlineData?.data) {
+                  imageBase64 = part.inlineData.data;
+                  imageBase64 = await enforceSize(
+                    imageBase64,
+                    FIXED_WIDTH,
+                    FIXED_HEIGHT
+                  );
+                  break;
+                }
               }
             }
+          } catch (genError) {
+            console.error(`Attempt ${attempts} failed:`, genError);
+            if (attempts === maxAttempts) throw genError;
+            await new Promise((resolve) =>
+              setTimeout(resolve, 1000 * attempts)
+            ); // Exponential backoff
           }
+        }
 
+        if (!imageBase64) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Failed to generate image after multiple attempts",
+          });
+        }
 
-          if (!imageBase64) {
-            throw new Error("No image generated in response");
-          }
+        // Upload the generated image
+        const uploadUrl = await uploadGeneratedImageFromBase64(imageBase64);
 
-          // Upload the generated image using UploadThing
-          const uploadUrl = await uploadGeneratedImageFromBase64(imageBase64);
+        // Log AI generation
+        const aiGeneration = await ctx.db.aIGenerationLog.create({
+          data: {
+            userId: ctx.session.user.id!,
+            workspaceId,
+            postId: post.id,
+            scheduleId: schedule.id,
+            type: "IMAGE",
+            prompt: effectivePrompt,
+            model: modelConfig.model,
+            imageSize: FIXED_IMAGE_SIZE,
+            duration: 0,
+            status: "COMPLETED",
+            cost: 0.02, // Implement cost calculation
+          },
+        });
 
-          // Log AI generation
-          const aiGeneration = await ctx.db.aIGenerationLog.create({
+        // Update or create post image
+        let postImage;
+        if (post.images.length > 0 && post.images[0]?.id) {
+          postImage = await ctx.db.postImage.update({
+            where: { id: post.images[0].id },
             data: {
-              userId: ctx.session.user.id,
-              workspaceId,
-              postId: post.id,
-              scheduleId,
-              type: "IMAGE",
-              prompt: effectivePrompt,
-              model: "gemini-2.5-flash-image-preview",
-              imageSize: "1024x1024",
-              duration,
-              status: "COMPLETED",
-              cost: 0,
+              url: uploadUrl,
+              aiPrompt: effectivePrompt,
+              isApproved: false,
+              aiGenerationId: aiGeneration.id,
+              width: FIXED_WIDTH,
+              height: FIXED_HEIGHT,
             },
           });
-
-          let postImage;
-          if (post.images.length > 0 && post.images[0]?.id) {
-            postImage = await ctx.db.postImage.update({
-              where: { id: post.images[0].id },
-              data: {
-                url: uploadUrl,
-                aiPrompt: effectivePrompt,
-                isApproved: false,
-                aiGenerationId: aiGeneration.id,
-              },
-            });
-          } else {
-            postImage = await ctx.db.postImage.create({
-              data: {
-                postId: post.id,
-                url: uploadUrl,
-                aiPrompt: effectivePrompt,
-                isApproved: false,
-                order: 0,
-                aiGenerationId: aiGeneration.id,
-              },
-            });
-          }
-
-          // Update the AI generation log with the imageId
+        } else {
+          postImage = await ctx.db.postImage.create({
+            data: {
+              postId: post.id,
+              url: uploadUrl,
+              aiPrompt: effectivePrompt,
+              isApproved: false,
+              order: 0,
+              aiGenerationId: aiGeneration.id,
+              width: FIXED_WIDTH,
+              height: FIXED_HEIGHT,
+            },
+          });
+        }
+        const currentLog = await ctx.db.aIGenerationLog.findUnique({
+          where: { id: aiGeneration.id },
+          select: { imageId: true },
+        });
+        // Update AI generation log
+        if (!currentLog?.imageId) {
           await ctx.db.aIGenerationLog.update({
             where: { id: aiGeneration.id },
             data: {
@@ -1610,37 +2325,44 @@ export const postsRouter = createTRPCRouter({
               status: "COMPLETED",
             },
           });
-
-          completed++;
-          await ctx.db.postGenerationProgress.update({
-            where: { scheduleId },
-            data: { completed },
-          });
-        } catch (error) {
-          console.error(`Failed to generate image for post ${post.id}:`, error);
-
-          // Log failed generation
-          await ctx.db.aIGenerationLog.create({
-            data: {
-              userId: ctx.session.user.id,
-              workspaceId,
-              postId: post.id,
-              scheduleId,
-              type: "IMAGE",
-              prompt: effectivePrompt,
-              model: "gemini-2.5-flash-image-preview",
-              imageSize: "1024x1024",
-              duration: 0,
-              status: "FAILED",
-              error: error instanceof Error ? error.message : "Unknown error",
-              cost: 0,
-            },
-          });
-          continue;
         }
-      }
 
-      return { success: true, imagesGenerated: completed };
+        return {
+          success: true,
+          postId,
+          imageUrl: uploadUrl,
+          imageId: postImage.id,
+        };
+      } catch (error) {
+        console.error(`Failed to generate image for post ${postId}:`, error);
+
+        // Log failed generation
+        await ctx.db.aIGenerationLog.create({
+          data: {
+            userId: ctx.session.user.id!,
+            workspaceId,
+            postId,
+            scheduleId: schedule.id,
+            type: "IMAGE",
+            prompt: schedule.imagePrompt || "Default prompt",
+            model: "gemini-2.5-flash-image-preview",
+            imageSize: FIXED_IMAGE_SIZE,
+            duration: 0,
+            status: "FAILED",
+            error: error instanceof Error ? error.message : "Unknown error",
+            cost: 0,
+          },
+        });
+
+        if (error instanceof TRPCError) {
+          throw error;
+        }
+
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Failed to generate image",
+        });
+      }
     }),
   getGenerationProgress: protectedProcedure
     .input(z.object({ scheduleId: z.string() }))

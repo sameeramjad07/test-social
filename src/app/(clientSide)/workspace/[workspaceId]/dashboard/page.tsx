@@ -147,6 +147,10 @@ export default function WorkspaceDashboardPage() {
   };
 
   const handleEditSchedule = (scheduleId: string) => {
+    router.push(`/workspace/${workspaceId}/schedule/${scheduleId}/edit`);
+  };
+
+  const handleViewSchedule = (scheduleId: string) => {
     router.push(`/workspace/${workspaceId}/schedule/${scheduleId}`);
   };
 
@@ -208,6 +212,7 @@ export default function WorkspaceDashboardPage() {
           workspaceId={workspaceId}
           onCreateSchedule={() => setIsCreateScheduleOpen(true)}
           onEditSchedule={handleEditSchedule}
+          onViewSchedule={handleViewSchedule}
         />
 
         {/* Connected Accounts */}

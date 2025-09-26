@@ -40,12 +40,14 @@ interface AIContentAssistantProps {
   workspaceId: string;
   onCreateSchedule: () => void;
   onEditSchedule: (scheduleId: string) => void;
+  onViewSchedule: (scheduleId: string) => void;
 }
 
 export function AIContentAssistant({
   workspaceId,
   onCreateSchedule,
   onEditSchedule,
+  onViewSchedule,
 }: AIContentAssistantProps) {
   const {
     data: schedules,
@@ -128,6 +130,7 @@ export function AIContentAssistant({
               key={schedule.id}
               schedule={schedule}
               onEdit={onEditSchedule}
+              onView={onViewSchedule}
               onDelete={(id) =>
                 deleteMutation.mutate({ scheduleId: id, workspaceId })
               }

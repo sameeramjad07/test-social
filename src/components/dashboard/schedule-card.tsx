@@ -4,7 +4,6 @@ import { useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -62,6 +61,7 @@ interface Schedule {
 interface ScheduleCardProps {
   schedule: Schedule;
   onEdit: (scheduleId: string) => void;
+  onView: (scheduleId: string) => void;
   onDelete: (scheduleId: string) => void;
   onToggleActive: (scheduleId: string, isActive: boolean) => void;
   index: number;
@@ -112,6 +112,7 @@ function PreviewImage({ src, alt }: { src?: string | null; alt?: string }) {
 export function ScheduleCard({
   schedule,
   onEdit,
+  onView,
   onDelete,
   onToggleActive,
 }: ScheduleCardProps) {
@@ -132,17 +133,15 @@ export function ScheduleCard({
   // Sanitize and validate post counts
   const validTotalPosts = Math.max(1, schedule.totalPosts || 1); // Ensure at least 1 to avoid division by zero
   const validApprovedPosts = Math.max(0, schedule.approvedPosts || 0);
-  const progressPercentage = Math.round(
-    (validApprovedPosts / validTotalPosts) * 100
-  );
 
   return (
     <>
       <Card
-        className="border-0 shadow-lg bg-white/90 backdrop-blur-sm dark:bg-slate-900/90 hover:shadow-xl transition-shadow cursor-pointer rounded-xl overflow-hidden"
-        onClick={() => onEdit(schedule.id)}
+        className="border-0 shadow-lg bg-white/90 backdrop-blur-sm dark:bg-slate-900/90 hover:shadow-xl cursor-pointer transition-shadow rounded-xl overflow-hidden"
+        onClick={() => onView(schedule.id)}
       >
-        <CardContent className="p-6">
+        <CardContent className="p-6 flex flex-col h-full">
+          {/* Header */}
           <div className="flex items-start justify-between mb-4">
             <div className="flex-1">
               <div className="flex items-center gap-3 mb-3">
@@ -175,6 +174,7 @@ export function ScheduleCard({
                 </p>
               )}
             </div>
+            {/* Menu */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -223,6 +223,7 @@ export function ScheduleCard({
             </DropdownMenu>
           </div>
 
+          {/* Info */}
           <div className="grid grid-cols-2 gap-4 mb-4">
             <div className="space-y-1">
               <div className="flex items-center gap-1 text-sm text-slate-500 dark:text-slate-400">
@@ -252,23 +253,9 @@ export function ScheduleCard({
             </div>
           </div>
 
-          <div className="mb-4">
-            <div className="flex justify-between text-sm mb-2">
-              <span className="text-slate-600 dark:text-slate-400 font-medium">
-                Approval Progress
-              </span>
-              <span className="text-slate-600 dark:text-slate-400">
-                {progressPercentage}%
-              </span>
-            </div>
-            <Progress
-              value={progressPercentage}
-              className="h-2 bg-slate-200 dark:bg-slate-700"
-            />
-          </div>
-
+          {/* Posts */}
           {schedule.posts.length > 0 && (
-            <div className="space-y-3">
+            <div className="space-y-3 flex-1">
               <h4 className="text-sm font-medium text-slate-700 dark:text-slate-300">
                 Post Previews
               </h4>
@@ -309,15 +296,32 @@ export function ScheduleCard({
             </div>
           )}
 
-          <div className="flex justify-end pt-3">
+          {/* Footer */}
+          <div className="flex gap-x-3 justify-end pt-6 mt-auto">
             <Button
               variant="outline"
               size="sm"
-              onClick={() => onEdit(schedule.id)}
-              className="bg-gradient-to-r from-blue-600 to-purple-600 text-white border-0 hover:from-blue-700 hover:to-purple-700"
+              onClick={(e) => {
+                e.stopPropagation();
+                onView(schedule.id);
+              }} // 👈 calls onView, not onEdit
+              className="bg-gradient-to-r from-blue-600 to-purple-600 text-white border-0 hover:from-blue-700 hover:to-purple-700 cursor-pointer"
             >
-              <Edit className="w-3 h-3 mr-1" />
+              <FileText className="w-3 h-3 mr-1" />
               View Schedule
+            </Button>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                onEdit(schedule.id);
+              }} // 👈 calls onView, not onEdit
+              className="bg-gradient-to-r from-blue-600 to-purple-600 text-white border-0 hover:from-blue-700 hover:to-purple-700 cursor-pointer"
+            >
+              <FileText className="w-3 h-3 mr-1" />
+              Edit Schedule
             </Button>
           </div>
         </CardContent>
